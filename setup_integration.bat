@@ -114,6 +114,26 @@ if errorlevel 1 (
 :: Create logs directory if it doesn't exist
 if not exist logs mkdir logs
 
+:: Create launcher scripts
+echo Creating launcher scripts...
+(
+    echo @echo off
+    echo call venv\Scripts\activate.bat
+    echo python setup_credentials.py %%*
+) > run_setup_credentials.bat
+
+(
+    echo @echo off
+    echo call venv\Scripts\activate.bat
+    echo python accepted_calls.py %%*
+) > run_accepted_calls.bat
+
+(
+    echo @echo off
+    echo call venv\Scripts\activate.bat
+    echo python missed_calls.py %%*
+) > run_missed_calls.bat
+
 echo.
 echo ==========================================================
 echo  Setup Complete!
@@ -123,13 +143,13 @@ echo The integration environment has been set up.
 echo.
 echo Next steps:
 echo 1. Run setup_credentials.py to securely store your API credentials:
-echo    python setup_credentials.py --rc-jwt "your_rc_jwt" --rc-id "your_rc_id" --rc-secret "your_rc_secret" --rc-account "~" --zoho-id "your_zoho_id" --zoho-secret "your_zoho_secret" --zoho-refresh "your_zoho_refresh"
+echo    run_setup_credentials.bat --rc-jwt "your_rc_jwt" --rc-id "your_rc_id" --rc-secret "your_rc_secret" --rc-account "~" --zoho-id "your_zoho_id" --zoho-secret "your_zoho_secret" --zoho-refresh "your_zoho_refresh"
 echo.
 echo 2. Once credentials are set up, you can run the scripts:
 echo    For accepted calls:
-echo    python accepted_calls.py [--debug] [--dry-run]
+echo    run_accepted_calls.bat [--debug] [--dry-run]
 echo.
 echo    For missed calls:
-echo    python missed_calls.py [--debug] [--dry-run]
+echo    run_missed_calls.bat [--debug] [--dry-run]
 echo.
 pause 
