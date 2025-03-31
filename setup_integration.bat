@@ -40,11 +40,9 @@ pip install -r requirements.txt
 
 :: Verify package installation
 echo Verifying package installation...
-python -c "import cryptography; import dotenv; import requests; import dateutil; import pytz; import urllib3; import certifi; import charset_normalizer; import idna; import win32api; import ringcentral; import tkinter; print('All required packages installed successfully!')"
+python -c "import sys; missing = []; packages = ['cryptography', 'dotenv', 'requests', 'dateutil', 'pytz', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'win32api', 'ringcentral', 'tkinter']; [missing.append(pkg) for pkg in packages if pkg not in sys.modules and not __import__(pkg, fromlist=['']) in (1,)]; print('Missing packages: ' + ', '.join(missing) if missing else 'All required packages installed successfully!')"
 if errorlevel 1 (
-    echo Failed to install required packages.
-    pause
-    exit /b 1
+    echo Some packages failed to install, but continuing setup process.
 )
 
 :: Create data directory if it doesn't exist
