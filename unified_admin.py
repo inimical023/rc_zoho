@@ -387,6 +387,7 @@ class CredentialsTab(ttk.Frame):
             messagebox.showerror("Error", "Please fill in all RingCentral fields")
             return
         messagebox.showinfo("Success", "RingCentral credentials verified")
+        self.submit_button.state(['!disabled'])  # Enable the submit button
 
     def verify_zoho(self):
         """Verify Zoho credentials"""
@@ -394,6 +395,7 @@ class CredentialsTab(ttk.Frame):
             messagebox.showerror("Error", "Please fill in all Zoho fields")
             return
         messagebox.showinfo("Success", "Zoho credentials verified")
+        self.submit_button.state(['!disabled'])  # Enable the submit button
 
     def check_rc(self):
         """Check existing RingCentral credentials"""
