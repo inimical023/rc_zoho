@@ -10,7 +10,6 @@ def check_and_install_dependencies():
     """Check and install required dependencies."""
     required_packages = {
         'requests': '>=2.31.0,<3.0.0',
-        'pycredlib': '>=1.0.0,<2.0.0',
         'cryptography': '>=41.0.0,<42.0.0',
         'python-dateutil': '>=2.8.2,<3.0.0',
         'pytz': '>=2023.3,<2024.0',
