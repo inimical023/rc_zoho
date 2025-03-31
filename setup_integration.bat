@@ -36,7 +36,7 @@ if errorlevel 1 (
 :: Install required packages
 echo Installing required packages...
 python -m pip install --upgrade pip
-pip install requests cryptography python-dateutil pytz urllib3 certifi charset-normalizer idna pywin32 ringcentral
+pip install requests cryptography python-dateutil pytz urllib3 certifi charset-normalizer idna pywin32 ringcentral python-dotenv
 
 :: Create data directory if it doesn't exist
 if not exist data mkdir data
@@ -56,6 +56,15 @@ echo Downloading scripts from GitHub...
 
 :: Set GitHub repository URL and branch
 set GITHUB_REPO=https://raw.githubusercontent.com/inimical023/rc_zoho/main
+
+:: Download common.py
+echo Downloading common.py...
+curl -o common.py "%GITHUB_REPO%/common.py"
+if errorlevel 1 (
+    echo Failed to download common.py
+    pause
+    exit /b 1
+)
 
 :: Download accepted_calls.py
 echo Downloading accepted_calls.py...
@@ -80,6 +89,15 @@ echo Downloading secure_credentials.py...
 curl -o secure_credentials.py "%GITHUB_REPO%/secure_credentials.py"
 if errorlevel 1 (
     echo Failed to download secure_credentials.py
+    pause
+    exit /b 1
+)
+
+:: Download setup_credentials.py
+echo Downloading setup_credentials.py...
+curl -o setup_credentials.py "%GITHUB_REPO%/setup_credentials.py"
+if errorlevel 1 (
+    echo Failed to download setup_credentials.py
     pause
     exit /b 1
 )
