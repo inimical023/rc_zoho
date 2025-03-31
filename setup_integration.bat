@@ -36,7 +36,7 @@ if errorlevel 1 (
 :: Install required packages
 echo Installing required packages...
 python -m pip install --upgrade pip
-pip install --upgrade requests cryptography python-dateutil pytz urllib3 certifi charset-normalizer idna pywin32 ringcentral python-dotenv tkinter
+pip install --upgrade requests cryptography python-dateutil pytz urllib3 certifi charset-normalizer idna pywin32 ringcentral python-dotenv
 
 :: Verify package installation
 echo Verifying package installation...
