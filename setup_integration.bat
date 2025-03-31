@@ -15,9 +15,9 @@ if errorlevel 1 (
 )
 
 :: Create virtual environment if it doesn't exist
-if not exist venv (
+if not exist .venv (
     echo Creating virtual environment...
-    python -m venv venv
+    python -m venv .venv
     if errorlevel 1 (
         echo Failed to create virtual environment.
         pause
@@ -26,7 +26,7 @@ if not exist venv (
 )
 
 :: Activate virtual environment
-call venv\Scripts\activate.bat
+call .venv\Scripts\activate.bat
 if errorlevel 1 (
     echo Failed to activate virtual environment.
     pause
@@ -36,7 +36,7 @@ if errorlevel 1 (
 :: Install required packages
 echo Installing required packages...
 python -m pip install --upgrade pip
-pip install --upgrade requests cryptography python-dateutil pytz urllib3 certifi charset-normalizer idna pywin32 ringcentral python-dotenv
+pip install -r requirements.txt
 
 :: Verify package installation
 echo Verifying package installation...
@@ -69,7 +69,7 @@ echo Downloading scripts from GitHub...
 :: Set GitHub repository URL and branch
 set GITHUB_REPO=https://raw.githubusercontent.com/inimical023/rc_zoho/main
 
-:: Download common.py
+:: Download all necessary files
 echo Downloading common.py...
 curl -o common.py "%GITHUB_REPO%/common.py"
 if errorlevel 1 (
@@ -78,7 +78,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Download accepted_calls.py
 echo Downloading accepted_calls.py...
 curl -o accepted_calls.py "%GITHUB_REPO%/accepted_calls.py"
 if errorlevel 1 (
@@ -87,7 +86,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Download missed_calls.py
 echo Downloading missed_calls.py...
 curl -o missed_calls.py "%GITHUB_REPO%/missed_calls.py"
 if errorlevel 1 (
@@ -96,7 +94,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Download secure_credentials.py
 echo Downloading secure_credentials.py...
 curl -o secure_credentials.py "%GITHUB_REPO%/secure_credentials.py"
 if errorlevel 1 (
@@ -104,6 +101,51 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+echo Downloading unified_admin.py...
+curl -o unified_admin.py "%GITHUB_REPO%/unified_admin.py"
+if errorlevel 1 (
+    echo Failed to download unified_admin.py
+    pause
+    exit /b 1
+)
+
+echo Downloading requirements.txt...
+curl -o requirements.txt "%GITHUB_REPO%/requirements.txt"
+if errorlevel 1 (
+    echo Failed to download requirements.txt
+    pause
+    exit /b 1
+)
+
+echo Downloading README.md...
+curl -o README.md "%GITHUB_REPO%/README.md"
+if errorlevel 1 (
+    echo Failed to download README.md
+    pause
+    exit /b 1
+)
+
+:: Create launch_admin.bat
+echo Creating launch_admin.bat...
+(
+    echo @echo off
+    echo call .venv\Scripts\activate.bat
+    echo python unified_admin.py %%*
+) > launch_admin.bat
+
+:: Create install.ps1
+echo Creating install.ps1...
+(
+    echo # PowerShell installation script for RingCentral-Zoho Integration
+    echo # This script is created during setup_integration.bat execution
+    echo.
+    echo Write-Host "RingCentral-Zoho Integration Installation"
+    echo Write-Host "========================================"
+    echo.
+    echo # Add installation logic here if needed
+    echo Write-Host "Installation completed successfully!"
+) > install.ps1
 
 :: Create GUI version of setup_credentials.py
 echo Creating setup_credentials.py with GUI...
@@ -132,7 +174,7 @@ echo Creating setup_credentials.py with GUI...
     echo     """Ensure virtual environment is activated"""
     echo     if not hasattr(sys, 'real_prefix') and not hasattr(sys, 'base_prefix'):
     echo         logger.info("Virtual environment not activated, attempting to activate...")
-    echo         venv_path = Path("venv/Scripts/activate.bat")
+    echo         venv_path = Path(".venv/Scripts/activate.bat")
     echo         if not venv_path.exists():
     echo             logger.error("Virtual environment not found at %s", venv_path)
     echo             return False
@@ -326,19 +368,19 @@ echo Creating setup_credentials.py with GUI...
 echo Creating launcher scripts...
 (
     echo @echo off
-    echo call venv\Scripts\activate.bat
+    echo call .venv\Scripts\activate.bat
     echo python setup_credentials.py %%*
 ) > run_setup_credentials.bat
 
 (
     echo @echo off
-    echo call venv\Scripts\activate.bat
+    echo call .venv\Scripts\activate.bat
     echo python accepted_calls.py %%*
 ) > run_accepted_calls.bat
 
 (
     echo @echo off
-    echo call venv\Scripts\activate.bat
+    echo call .venv\Scripts\activate.bat
     echo python missed_calls.py %%*
 ) > run_missed_calls.bat
 

@@ -16,7 +16,8 @@ $files = @(
     "launch_admin.bat",
     "accepted_calls.py",
     "missed_calls.py",
-    "run_script_date.bat"
+    "common.py",
+    "README.md"
 )
 
 # Function to check Python installation

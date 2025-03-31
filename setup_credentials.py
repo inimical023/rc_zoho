@@ -6,17 +6,18 @@ import subprocess
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
+from common import setup_logging
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join('logs', 'setup_credentials.log')),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+logger = setup_logging('setup_credentials')
+
+class SetupError(Exception):
+    """Custom exception for setup errors"""
+    def __init__(self, code, message, details=None):
+        self.code = code
+        self.message = message
+        self.details = details
+        super().__init__(f"Error {code}: {message}")
 
 def ensure_venv_activated():
     """Ensure virtual environment is activated"""
@@ -24,15 +25,21 @@ def ensure_venv_activated():
         logger.info("Virtual environment not activated, attempting to activate...")
         venv_path = Path('.venv/Scripts/activate.bat')
         if not venv_path.exists():
-            logger.error("Virtual environment not found at %s", venv_path)
-            return False
+            raise SetupError(
+                code="VENV001",
+                message="Virtual environment not found",
+                details=f"Expected path: {venv_path}"
+            )
         try:
             subprocess.run([str(venv_path)], shell=True, check=True)
             logger.info("Virtual environment activated successfully")
             return True
         except subprocess.CalledProcessError as e:
-            logger.error("Failed to activate virtual environment: %s", e)
-            return False
+            raise SetupError(
+                code="VENV002",
+                message="Failed to activate virtual environment",
+                details=str(e)
+            )
     return True
 
 class CredentialsGUI:

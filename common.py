@@ -12,8 +12,9 @@ from dotenv import load_dotenv
 import subprocess
 import pkg_resources
 
-# Standard logging format
+# Standard logging format and configuration
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 
 def check_and_install_dependencies():
     """Check and install required dependencies."""
@@ -127,22 +128,28 @@ class SecureStorage:
             logger.error(f"Error loading lead owners: {str(e)}")
             return []
 
-def setup_logging(script_name, debug=False):
-    """Configure logging for a script"""
-    log_dir = Path('logs')
-    log_dir.mkdir(exist_ok=True)
+def setup_logging(logger_name):
+    """Configure logging with consistent format and handlers"""
+    logger = logging.getLogger(logger_name)
+    logger.setLevel(logging.INFO)
     
-    log_file = log_dir / f'{script_name}.log'
+    # Create logs directory if it doesn't exist
+    Path('logs').mkdir(exist_ok=True)
     
-    logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
-        format=LOG_FORMAT,
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-    )
-    return logging.getLogger(script_name)
+    # Create handlers
+    file_handler = logging.FileHandler(os.path.join('logs', f'{logger_name}.log'))
+    console_handler = logging.StreamHandler()
+    
+    # Create formatters and add it to handlers
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
 
 def parse_arguments():
     """Parse command line arguments"""

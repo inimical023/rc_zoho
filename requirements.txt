@@ -2,6 +2,7 @@
 requests>=2.31.0,<3.0.0
 cryptography>=41.0.0,<42.0.0
 python-dotenv>=1.0.0,<2.0.0
+pycredlib>=1.0.0,<2.0.0
 
 # Date and time handling
 python-dateutil>=2.8.2,<3.0.0
@@ -14,4 +15,7 @@ charset-normalizer>=3.3.0,<4.0.0
 idna>=3.4,<4.0.0
 
 # Windows-specific (required for GUI)
-pywin32>=305; platform_system == "Windows" 
+pywin32>=305; platform_system == "Windows"
+
+# RingCentral API
+ringcentral>=0.8.0,<1.0.0 
