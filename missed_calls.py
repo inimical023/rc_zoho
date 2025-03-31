@@ -2,6 +2,13 @@ from common import *   # Now you have os, sys, json, logging, etc.
 import itertools  # For round-robin lead owner assignment
 import argparse
 
+# Check and install dependencies
+check_and_install_dependencies()
+
+# Initialize storage and logger
+storage = SecureStorage()
+logger = setup_logging("missed_calls")
+
 # Clear text credentials - REPLACE THESE WITH YOUR ACTUAL CREDENTIALS
 RC_JWT_TOKEN = ""
 RC_CLIENT_ID = ""
@@ -32,11 +39,15 @@ logger = logging.getLogger("missed_calls")
 class RingCentralClient:
     """Client for interacting with the RingCentral API."""
 
-    def __init__(self, jwt_token, client_id, client_secret, account_id):
-        self.jwt_token = jwt_token
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.account_id = account_id
+    def __init__(self):
+        credentials = storage.load_credentials()
+        if not credentials:
+            raise Exception("No RingCentral credentials found")
+            
+        self.jwt_token = credentials['rc_jwt']
+        self.client_id = credentials['rc_client_id']
+        self.client_secret = credentials['rc_client_secret']
+        self.account_id = credentials['rc_account']
         self.base_url = "https://platform.ringcentral.com"
         self.access_token = None
         self._get_oauth_token()
@@ -116,11 +127,15 @@ class RingCentralClient:
 class ZohoClient:
     """Client for interacting with the Zoho CRM API."""
 
-    def __init__(self, client_id, client_secret, refresh_token, dry_run=False):
+    def __init__(self, dry_run=False):
         """Initialize the Zoho client with client credentials."""
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.refresh_token = refresh_token
+        credentials = storage.load_credentials()
+        if not credentials:
+            raise Exception("No Zoho credentials found")
+            
+        self.client_id = credentials['zoho_client_id']
+        self.client_secret = credentials['zoho_client_secret']
+        self.refresh_token = credentials['zoho_refresh_token']
         self.access_token = None
         self.base_url = "https://www.zohoapis.com/crm/v7"  # Default to v7
         self.dry_run = dry_run  # Add dry_run attribute
@@ -255,109 +270,59 @@ class ZohoClient:
         data = {
             "data": [
                 {
-                    "Note_Title": "Missed Call",
+                    "Note_Title": "Call Information",
                     "Note_Content": note_content
                 }
             ]
         }
 
         try:
-            # Make the API call
             response = requests.post(url, headers=headers, json=data)
-
-            # Check if successful
-            if response.status_code in [200, 201, 202]:
+            if response.status_code == 201:
                 logger.info(f"Successfully added note to lead {lead_id}")
-                return True
+                return response.json()
             else:
-                logger.error(f"Error adding note to lead {lead_id}. Status code: {response.status_code}")
-                logger.error(f"Response: {response.text}")
-                return False
-
+                logger.error(f"Error adding note to lead {lead_id}: {response.status_code} - {response.text}")
+                return None
         except Exception as e:
             logger.error(f"Exception adding note to lead {lead_id}: {e}")
-            return False
+            return None
 
     def create_zoho_lead(self, lead_data):
-        """Create a lead in Zoho CRM using v7 API with v2 fallback."""
-        access_token = self.access_token
-        if not access_token:
-            logger.error("No access token provided for creating lead")
+        """Create a new lead in Zoho CRM."""
+        if not self.access_token:
+            logger.error("No access token available")
             return None
 
-        logger.info(f"Creating Zoho lead with v7 API")
-
-        # Set up the request
-        url_v7 = f"https://www.zohoapis.com/crm/v7/Leads"
+        url = f"{self.base_url}/Leads"
         headers = {
-            "Authorization": f"Zoho-oauthtoken {access_token}",
+            "Authorization": f"Zoho-oauthtoken {self.access_token}",
             "Content-Type": "application/json"
         }
 
         try:
-            # Make the API call
-            response = requests.post(url_v7, headers=headers, json=lead_data)
-
-            # Check if successful
+            response = requests.post(url, headers=headers, json=lead_data)
             if response.status_code == 201:
                 data = response.json()
-                lead_id = data.get("data", [{}])[0].get("details", {}).get("id")
-                logger.info(f"Successfully created Zoho lead with v7 API, ID: {lead_id}")
-                return lead_id
+                if data and data['data']:
+                    lead_id = data['data'][0]['id']
+                    logger.info(f"Successfully created lead {lead_id}")
+                    return lead_id
+                else:
+                    logger.error("No lead ID in response data")
+                    return None
             else:
-                logger.error(f"Error creating Zoho lead with v7 API. Status code: {response.status_code}")
-                logger.error(f"Response: {response.text}")
-
-                # Try the v2 API as fallback
-                logger.info("Attempting to create lead with v2 API as fallback")
-                return self.create_zoho_lead_v2(lead_data)
-
-        except Exception as e:
-            logger.error(f"Exception creating Zoho lead with v7 API: {e}")
-            # Try v2 API as fallback
-            logger.info("Attempting to create lead with v2 API as fallback")
-            return self.create_zoho_lead_v2(lead_data)
-
-    def create_zoho_lead_v2(self, lead_data):
-        """Create a lead in Zoho CRM using v2 API (fallback method)"""
-        access_token = self.access_token
-        if not access_token:
-            logger.error("No access token provided for creating lead")
-            return None
-
-        logger.info("Using v2 API fallback for lead creation")
-
-        # Set up the request for v2 API
-        url_v2 = f"https://www.zohoapis.com/crm/v2/Leads"
-        headers = {
-            "Authorization": f"Zoho-oauthtoken {access_token}",
-            "Content-Type": "application/json"
-        }
-
-        try:
-            # Make the API call to v2 endpoint
-            response_v2 = requests.post(url_v2, headers=headers, json=lead_data)
-
-            # Check if successful with v2 API
-            if response_v2.status_code == 201:
-                data_v2 = response_v2.json()
-                lead_id = data_v2.get("data", [{}])[0].get("details", {}).get("id")
-                logger.info(f"Successfully created Zoho lead with v2 API, ID: {lead_id}")
-                return lead_id
-            else:
-                logger.error(f"Error creating Zoho lead with v2 API. Status code: {response_v2.status_code}")
-                logger.error(f"Response: {response_v2.text}")
+                logger.error(f"Error creating lead: {response.status_code} - {response.text}")
                 return None
-
         except Exception as e:
-            logger.error(f"Exception creating Zoho lead with v2 API: {e}")
+            logger.error(f"Exception creating lead: {e}")
             return None
 
     def search_records(self, module, criteria):
         """Search for records in Zoho CRM."""
         if not self.access_token:
             logger.error("No access token available")
-            raise Exception("No access token available")
+            return None
 
         url = f"{self.base_url}/{module}/search"
         headers = {
@@ -367,39 +332,22 @@ class ZohoClient:
         params = {
             "criteria": criteria
         }
-        logger.debug(f"Search URL: {url}, Headers: {headers}, Params: {params}")  # Log search details
-        response = requests.get(url, headers=headers, params=params)
 
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("data", [])
-        else:
-            logger.error(
-                f"Error searching records: {response.status_code} - {response.text}")
-            return []
-
-    def update_record(self, module, data):
-        """Update a record in Zoho CRM."""
-        if not self.access_token:
-            logger.error("No access token available")
-            raise Exception("No access token available")
-
-        url = f"{self.base_url}/{module}"
-        headers = {
-            "Authorization": f"Zoho-oauthtoken {self.access_token}",
-            "Content-Type": "application/json"
-        }
-        logger.debug(f"Update URL: {url}, Headers: {headers}, Data: {data}")  # Log update details
-        response = requests.put(url, headers=headers, json=data)
-
-        if response.status_code in [200, 202]:
-            logger.info(f"Successfully updated record. Status code: {response.status_code}")
-            return response.json()
-        else:
-            logger.error(
-                f"Error updating record: {response.status_code} - {response.text}")
-            raise Exception(
-                f"Error updating record: {response.status_code} - {response.text}")
+        try:
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                if data and data['data']:
+                    return data['data']
+                else:
+                    logger.warning(f"No records found matching criteria: {criteria}")
+                    return None
+            else:
+                logger.error(f"Error searching records: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Exception searching records: {e}")
+            return None
 
 
 def configure_logging(debug=False):
@@ -459,33 +407,30 @@ def get_yesterday_date_range():
 
 def process_missed_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, dry_run=False):
     """Process missed calls and create leads in Zoho CRM."""
+    if not call_logs:
+        logger.warning("No call logs to process")
+        return
+
     # Create a round-robin iterator for lead owners
     lead_owner_cycle = itertools.cycle(lead_owners)
     
-    processed_count = 0
-    skipped_count = 0
-
     for call in call_logs:
-        # Skip invalid calls
-        if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
-            logger.warning(f"Call has invalid structure, skipping: {call.get('id')}")
-            skipped_count += 1
+        # Skip calls that don't have the required data
+        if not call.get('from') or not call.get('to'):
+            logger.warning(f"Skipping call {call.get('id')} - missing required data")
             continue
             
-        # Check if the call result is "Missed"
-        if call.get('result') == 'Missed':
-            # Assign the next lead owner in the round-robin sequence
-            lead_owner = next(lead_owner_cycle)
-            zoho_client.create_or_update_lead(call, lead_owner, extension_names)
-            logger.info(
-                f"Processed missed call {call.get('id')} - Lead Owner: {lead_owner.get('name')}")
-            processed_count += 1
-        else:
-            logger.info(
-                f"Skipped call {call.get('id')} - Not a missed call (Result: {call.get('result')})")
-            skipped_count += 1
-    
-    logger.info(f"Summary: Processed {processed_count} missed calls, skipped {skipped_count} calls")
+        # Get the extension ID from the call
+        extension_id = call['to'].get('extensionId')
+        if not extension_id or extension_id not in extension_ids:
+            logger.warning(f"Skipping call {call.get('id')} - extension {extension_id} not in configured extensions")
+            continue
+            
+        # Get the next lead owner in the round-robin cycle
+        lead_owner = next(lead_owner_cycle)
+        
+        # Create or update the lead in Zoho CRM
+        zoho_client.create_or_update_lead(call, lead_owner, extension_names)
 
 
 def parse_arguments():
@@ -517,80 +462,48 @@ def parse_arguments():
 
 def main():
     """Main function."""
-    args = parse_arguments()
-    
-    # Configure logging
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-        logger.debug("Debug logging enabled")
-    
-    # Use custom log file if specified
-    if args.log_file:
-        for handler in logger.handlers[:]:
-            if isinstance(handler, logging.FileHandler):
-                logger.removeHandler(handler)
-        logger.addHandler(logging.FileHandler(args.log_file))
-        logger.info(f"Logging to custom log file: {args.log_file}")
-
-    # Override hardcoded credentials with command-line arguments if provided
-    global RC_JWT_TOKEN, RC_CLIENT_ID, RC_CLIENT_SECRET, RC_ACCOUNT_ID
-    global ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN
-    
-    # RingCentral credentials from command line
-    if args.rc_jwt:
-        RC_JWT_TOKEN = args.rc_jwt
-    if args.rc_id:
-        RC_CLIENT_ID = args.rc_id
-    if args.rc_secret:
-        RC_CLIENT_SECRET = args.rc_secret
-    if args.rc_account:
-        RC_ACCOUNT_ID = args.rc_account
+    try:
+        # Parse command line arguments
+        args = parse_arguments()
         
-    # Zoho credentials from command line
-    if args.zoho_id:
-        ZOHO_CLIENT_ID = args.zoho_id
-    if args.zoho_secret:
-        ZOHO_CLIENT_SECRET = args.zoho_secret
-    if args.zoho_refresh:
-        ZOHO_REFRESH_TOKEN = args.zoho_refresh
-
-    # Log which credentials we're using
-    logger.info(f"Using RingCentral client ID: {RC_CLIENT_ID[:5]}*** (first 5 chars)")
-    logger.info(f"Using Zoho client ID: {ZOHO_CLIENT_ID[:5]}*** (first 5 chars)")
-
-    # Load configurations
-    extension_ids, extension_names = load_extensions(args.extensions_file)
-    lead_owners = load_lead_owners(args.lead_owners_file)
-
-    rc_client = RingCentralClient(
-        RC_JWT_TOKEN, RC_CLIENT_ID, RC_CLIENT_SECRET, RC_ACCOUNT_ID)
-    zoho_client = ZohoClient(
-        ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, dry_run=args.dry_run)
-
-    if args.start_date and args.end_date:
-        start_date, end_date = args.start_date, args.end_date
-    else:
-        start_date, end_date = get_yesterday_date_range()
-
-    all_call_logs = []
-    for extension_id in extension_ids:
-        logger.info(
-            f"Getting call logs for extension {extension_id} from {start_date} to {end_date}")
-        call_logs = rc_client.get_call_logs(extension_id, start_date, end_date)
-        if call_logs:
-            # Debug check for invalid call structures
-            for call in call_logs:
-                if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
-                    logger.debug(f"Found call with missing from/phoneNumber: {call}")
-                    
-            all_call_logs.extend(call_logs)
-            logger.info(
-                f"Retrieved {len(call_logs)} call logs for extension {extension_id}")
-        else:
-            logger.info(f"No call logs found for extension {extension_id}")
-
-    process_missed_calls(
-        all_call_logs, zoho_client, extension_ids, extension_names, lead_owners, dry_run=args.dry_run)
+        # Set up logging based on debug flag
+        logger = setup_logging("missed_calls", args.debug)
+        
+        # Get date range for processing
+        start_date, end_date = get_date_range(args.hours_back, args.start_date, args.end_date)
+        logger.info(f"Processing calls from {start_date} to {end_date}")
+        
+        # Initialize clients
+        rc_client = RingCentralClient()
+        zoho_client = ZohoClient(dry_run=args.dry_run)
+        
+        # Load extensions and lead owners
+        extensions = storage.load_extensions()
+        lead_owners = storage.load_lead_owners()
+        
+        if not extensions:
+            logger.error("No extensions configured")
+            return
+            
+        if not lead_owners:
+            logger.error("No lead owners configured")
+            return
+            
+        # Create extension mapping
+        extension_ids = {ext['id'] for ext in extensions}
+        extension_names = {ext['id']: ext['name'] for ext in extensions}
+        
+        # Process each extension
+        for extension in extensions:
+            logger.info(f"Processing calls for extension {extension['name']}")
+            call_logs = rc_client.get_call_logs(extension['id'], start_date, end_date)
+            process_missed_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, args.dry_run)
+            
+        logger.info("Processing completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error in main: {str(e)}")
+        raise
 
 
 if __name__ == "__main__":

@@ -50,6 +50,9 @@ if errorlevel 1 (
 :: Create data directory if it doesn't exist
 if not exist data mkdir data
 
+:: Create logs directory if it doesn't exist
+if not exist logs mkdir logs
+
 :: Create extensions.txt with the provided extensions
 echo Creating extensions.txt...
 (
@@ -319,9 +322,6 @@ echo Creating setup_credentials.py with GUI...
     echo     main()
 ) > setup_credentials.py
 
-:: Create logs directory if it doesn't exist
-if not exist logs mkdir logs
-
 :: Create launcher scripts
 echo Creating launcher scripts...
 (
@@ -342,6 +342,188 @@ echo Creating launcher scripts...
     echo python missed_calls.py %%*
 ) > run_missed_calls.bat
 
+:: Create the new run_script_date.bat with GUI
+echo Creating run_script_date.bat...
+(
+    echo @echo off
+    echo setlocal enabledelayedexpansion
+    echo.
+    echo :: Create a temporary directory for date files
+    echo set "temp_dir=%%TEMP%%\date_picker_%%RANDOM%%"
+    echo mkdir "%%temp_dir%%" 2^>nul
+    echo.
+    echo :: Create a simple PowerShell script for the GUI
+    echo Add-Type -AssemblyName System.Windows.Forms ^> "%%temp_dir%%\gui.ps1"
+    echo Add-Type -AssemblyName System.Drawing ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form = New-Object System.Windows.Forms.Form ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Text = 'Select Script and Date Range' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Size = New-Object System.Drawing.Size(700, 500) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.StartPosition = 'CenterScreen' ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptLabel = New-Object System.Windows.Forms.Label ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptLabel.Location = New-Object System.Drawing.Point(10, 10) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptLabel.Size = New-Object System.Drawing.Size(280, 20) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptLabel.Text = 'Select Script to Run:' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($scriptLabel) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox = New-Object System.Windows.Forms.ComboBox ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.Location = New-Object System.Drawing.Point(10, 40) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.Size = New-Object System.Drawing.Size(250, 20) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.Items.Add('Select Script') ^| Out-Null ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.Items.Add('Missed Calls') ^| Out-Null ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.Items.Add('Accepted Calls with Recordings') ^| Out-Null ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.SelectedIndex = 0 ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($scriptComboBox) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $tooltip = New-Object System.Windows.Forms.ToolTip ^>^> "%%temp_dir%%\gui.ps1"
+    echo $tooltip.SetToolTip($scriptComboBox, 'Select a script to run') ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label1 = New-Object System.Windows.Forms.Label ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label1.Location = New-Object System.Drawing.Point(10, 80) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label1.Size = New-Object System.Drawing.Size(280, 20) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label1.Text = 'Start Date and Time:' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($label1) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $startDateTime = New-Object System.Windows.Forms.DateTimePicker ^>^> "%%temp_dir%%\gui.ps1"
+    echo $startDateTime.Location = New-Object System.Drawing.Point(10, 110) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $startDateTime.Size = New-Object System.Drawing.Size(250, 20) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $startDateTime.Format = [System.Windows.Forms.DateTimePickerFormat]::Custom ^>^> "%%temp_dir%%\gui.ps1"
+    echo $startDateTime.CustomFormat = 'yyyy-MM-dd HH:mm:ss' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $startDateTime.Value = [DateTime]::Today ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($startDateTime) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label2 = New-Object System.Windows.Forms.Label ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label2.Location = New-Object System.Drawing.Point(10, 150) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label2.Size = New-Object System.Drawing.Size(280, 20) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $label2.Text = 'End Date and Time:' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($label2) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $endDateTime = New-Object System.Windows.Forms.DateTimePicker ^>^> "%%temp_dir%%\gui.ps1"
+    echo $endDateTime.Location = New-Object System.Drawing.Point(10, 180) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $endDateTime.Size = New-Object System.Drawing.Size(250, 20) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $endDateTime.Format = [System.Windows.Forms.DateTimePickerFormat]::Custom ^>^> "%%temp_dir%%\gui.ps1"
+    echo $endDateTime.CustomFormat = 'yyyy-MM-dd HH:mm:ss' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $endDateTime.Value = [DateTime]::Today.AddHours(23).AddMinutes(59).AddSeconds(59) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($endDateTime) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $descriptionLabel = New-Object System.Windows.Forms.Label ^>^> "%%temp_dir%%\gui.ps1"
+    echo $descriptionLabel.Location = New-Object System.Drawing.Point(300, 40) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $descriptionLabel.Size = New-Object System.Drawing.Size(350, 100) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $descriptionLabel.Text = 'Please select a script from the dropdown menu to see its description.' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($descriptionLabel) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $scriptComboBox.Add_SelectedIndexChanged({ ^>^> "%%temp_dir%%\gui.ps1"
+    echo     if ($scriptComboBox.SelectedIndex -eq 0) { ^>^> "%%temp_dir%%\gui.ps1"
+    echo         $descriptionLabel.Text = 'Please select a script from the dropdown menu to see its description.' ^>^> "%%temp_dir%%\gui.ps1"
+    echo     } elseif ($scriptComboBox.SelectedIndex -eq 1) { ^>^> "%%temp_dir%%\gui.ps1"
+    echo         $descriptionLabel.Text = 'This script retrieves missed calls from RingCentral and creates leads in Zoho CRM. Each missed call is assigned to a lead owner in round-robin fashion, with the lead status set to \"Missed Call\". The lead includes caller information and call time details.' ^>^> "%%temp_dir%%\gui.ps1"
+    echo     } else { ^>^> "%%temp_dir%%\gui.ps1"
+    echo         $descriptionLabel.Text = 'This script retrieves accepted calls from RingCentral and creates leads in Zoho CRM. Each accepted call is associated with the lead owner who accepted it, and the lead includes caller information, call details, and call recordings. The recordings are attached to the lead in Zoho CRM.' ^>^> "%%temp_dir%%\gui.ps1"
+    echo     } ^>^> "%%temp_dir%%\gui.ps1"
+    echo }) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $dryRunCheckbox = New-Object System.Windows.Forms.CheckBox ^>^> "%%temp_dir%%\gui.ps1"
+    echo $dryRunCheckbox.Location = New-Object System.Drawing.Point(10, 220) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $dryRunCheckbox.Size = New-Object System.Drawing.Size(250, 20) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $dryRunCheckbox.Text = 'Run in Dry-Run Mode (Preview Only)' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($dryRunCheckbox) ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $runButton = New-Object System.Windows.Forms.Button ^>^> "%%temp_dir%%\gui.ps1"
+    echo $runButton.Location = New-Object System.Drawing.Point(200, 400) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $runButton.Size = New-Object System.Drawing.Size(75, 23) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $runButton.Text = 'Run Script' ^>^> "%%temp_dir%%\gui.ps1"
+    echo $runButton.DialogResult = [System.Windows.Forms.DialogResult]::OK ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.Controls.Add($runButton) ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.AcceptButton = $runButton ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo $form.TopMost = $true ^>^> "%%temp_dir%%\gui.ps1"
+    echo $result = $form.ShowDialog() ^>^> "%%temp_dir%%\gui.ps1"
+    echo. ^>^> "%%temp_dir%%\gui.ps1"
+    echo if ($result -eq [System.Windows.Forms.DialogResult]::OK) { ^>^> "%%temp_dir%%\gui.ps1"
+    echo     if ($scriptComboBox.SelectedIndex -eq 0) { ^>^> "%%temp_dir%%\gui.ps1"
+    echo         [System.Windows.Forms.MessageBox]::Show('Please select a script to run.', 'No Script Selected', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) ^>^> "%%temp_dir%%\gui.ps1"
+    echo         exit ^>^> "%%temp_dir%%\gui.ps1"
+    echo     } ^>^> "%%temp_dir%%\gui.ps1"
+    echo     $scriptChoice = $scriptComboBox.SelectedIndex - 1 ^>^> "%%temp_dir%%\gui.ps1"
+    echo     $startDateTimeFormatted = $startDateTime.Value.ToString('yyyy-MM-ddTHH:mm:ss') ^>^> "%%temp_dir%%\gui.ps1"
+    echo     $endDateTimeFormatted = $endDateTime.Value.ToString('yyyy-MM-ddTHH:mm:ss') ^>^> "%%temp_dir%%\gui.ps1"
+    echo     $tempDir = "%%temp_dir%%" ^>^> "%%temp_dir%%\gui.ps1"
+    echo     [System.IO.File]::WriteAllText("$tempDir\script_choice.txt", $scriptChoice) ^>^> "%%temp_dir%%\gui.ps1"
+    echo     [System.IO.File]::WriteAllText("$tempDir\start_date.txt", $startDateTimeFormatted) ^>^> "%%temp_dir%%\gui.ps1"
+    echo     [System.IO.File]::WriteAllText("$tempDir\end_date.txt", $endDateTimeFormatted) ^>^> "%%temp_dir%%\gui.ps1"
+    echo     [System.IO.File]::WriteAllText("$tempDir\dry_run.txt", $dryRunCheckbox.Checked) ^>^> "%%temp_dir%%\gui.ps1"
+    echo } ^>^> "%%temp_dir%%\gui.ps1"
+    echo.
+    echo :: Run the PowerShell GUI script
+    echo powershell -ExecutionPolicy Bypass -File "%%temp_dir%%\gui.ps1"
+    echo.
+    echo :: Check if files exist (user might have closed the form)
+    echo if not exist "%%temp_dir%%\script_choice.txt" (
+    echo     rmdir /s /q "%%temp_dir%%" 2^>nul
+    echo     exit /b 1
+    echo )
+    echo.
+    echo :: Read script choice, dates, and dry-run setting from files
+    echo set /p script_choice=<"%%temp_dir%%\script_choice.txt"
+    echo set /p start_date=<"%%temp_dir%%\start_date.txt"
+    echo set /p end_date=<"%%temp_dir%%\end_date.txt"
+    echo set /p dry_run=<"%%temp_dir%%\dry_run.txt"
+    echo.
+    echo :: Set script name based on choice
+    echo if "%%script_choice%%"=="0" (
+    echo     set script_name=missed_calls.py
+    echo ) else (
+    echo     set script_name=accepted_calls.py
+    echo )
+    echo.
+    echo :: Create logs directory if it doesn't exist
+    echo if not exist "logs" mkdir logs
+    echo.
+    echo :: Set the log file name with timestamp
+    echo for /f "tokens=2 delims==" %%%%I in ('wmic os get localdatetime /value') do set datetime=%%%%I
+    echo set log_file=logs\script_run_%%datetime:~0,8%%_%%datetime:~8,6%%.log
+    echo.
+    echo :: Run the selected script with the date and time range and dry-run if selected
+    echo =============================================== ^> "%%log_file%%"
+    echo Script Run Details ^>^> "%%log_file%%"
+    echo =============================================== ^>^> "%%log_file%%"
+    echo Script: %%script_name%% ^>^> "%%log_file%%"
+    echo Start Date: %%start_date%% ^>^> "%%log_file%%"
+    echo End Date: %%end_date%% ^>^> "%%log_file%%"
+    echo Dry Run: %%dry_run%% ^>^> "%%log_file%%"
+    echo =============================================== ^>^> "%%log_file%%"
+    echo. ^>^> "%%log_file%%"
+    echo.
+    echo :: Start the script in the background
+    echo if "%%dry_run%%"=="True" (
+    echo     echo Running in dry-run mode... ^>^> "%%log_file%%"
+    echo     python %%script_name%% --start-date "%%start_date%%" --end-date "%%end_date%%" --dry-run --debug ^>^> "%%log_file%%" 2^>^&1
+    echo ) else (
+    echo     echo Running in normal mode... ^>^> "%%log_file%%"
+    echo     python %%script_name%% --start-date "%%start_date%%" --end-date "%%end_date%%" ^>^> "%%log_file%%" 2^>^&1
+    echo )
+    echo.
+    echo :: Create notification script
+    echo Add-Type -AssemblyName System.Windows.Forms ^> "%%temp_dir%%\notification.ps1"
+    echo [System.Windows.Forms.MessageBox]::Show('Script execution completed! The log file is available at: %%log_file%%', 'Script Complete', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) ^>^> "%%temp_dir%%\notification.ps1"
+    echo.
+    echo :: Show notification
+    echo powershell -ExecutionPolicy Bypass -File "%%temp_dir%%\notification.ps1"
+    echo.
+    echo :: Clean up temporary directory
+    echo rmdir /s /q "%%temp_dir%%" 2^>nul
+    echo.
+    echo :: Display log file path
+    echo.
+    echo echo Script execution completed. Log file is available at: %%log_file%%
+    echo echo.
+    echo.
+    echo :: Keep the window open
+    echo pause
+) > run_script_date.bat
+
 echo.
 echo ==========================================================
 echo  Setup Complete!
@@ -359,5 +541,8 @@ echo    run_accepted_calls.bat [--debug] [--dry-run]
 echo.
 echo    For missed calls:
 echo    run_missed_calls.bat [--debug] [--dry-run]
+echo.
+echo    For both scripts with date selection:
+echo    run_script_date.bat
 echo.
 pause 

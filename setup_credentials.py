@@ -4,97 +4,239 @@ import os
 import sys
 import subprocess
 from pathlib import Path
-from secure_credentials import SecureCredentials
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/setup.log'),
+        logging.FileHandler(os.path.join('logs', 'setup_credentials.log')),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger('setup_credentials')
+logger = logging.getLogger(__name__)
 
 def ensure_venv_activated():
-    """Ensure the virtual environment is activated"""
+    """Ensure virtual environment is activated"""
     if not hasattr(sys, 'real_prefix') and not hasattr(sys, 'base_prefix'):
-        logger.info("Virtual environment not activated. Attempting to activate...")
-        
-        # Get the script's directory
-        script_dir = Path(__file__).parent.absolute()
-        venv_path = script_dir / 'venv' / 'Scripts' / 'activate.bat'
-        
+        logger.info("Virtual environment not activated, attempting to activate...")
+        venv_path = Path('.venv/Scripts/activate.bat')
         if not venv_path.exists():
-            logger.error(f"Virtual environment not found at {venv_path}")
-            logger.error("Please run setup_integration.bat first to create the virtual environment.")
-            sys.exit(1)
-            
-        try:
-            # Activate the virtual environment
-            activate_cmd = f'"{venv_path}" && python "{__file__}" {" ".join(sys.argv[1:])}'
-            subprocess.run(activate_cmd, shell=True)
-            sys.exit(0)
-        except Exception as e:
-            logger.error(f"Failed to activate virtual environment: {str(e)}")
-            sys.exit(1)
-
-def setup_credentials(args):
-    """Set up and store credentials securely"""
-    try:
-        # Initialize secure credentials handler
-        secure_creds = SecureCredentials()
-        
-        # Prepare credentials dictionary
-        credentials = {
-            'rc_jwt': args.rc_jwt,
-            'rc_client_id': args.rc_id,
-            'rc_client_secret': args.rc_secret,
-            'rc_account': args.rc_account,
-            'zoho_client_id': args.zoho_id,
-            'zoho_client_secret': args.zoho_secret,
-            'zoho_refresh_token': args.zoho_refresh
-        }
-        
-        # Save credentials
-        if secure_creds.save_credentials(credentials):
-            logger.info("Credentials setup completed successfully")
-            return True
-        else:
-            logger.error("Failed to save credentials")
+            logger.error("Virtual environment not found at %s", venv_path)
             return False
-            
-    except Exception as e:
-        logger.error(f"Error during credentials setup: {str(e)}")
-        return False
+        try:
+            subprocess.run([str(venv_path)], shell=True, check=True)
+            logger.info("Virtual environment activated successfully")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error("Failed to activate virtual environment: %s", e)
+            return False
+    return True
+
+class CredentialsGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("API Credentials Setup")
+        self.root.geometry("600x800")
+
+        # Create main frame with padding
+        main_frame = ttk.Frame(root, padding="20")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # RingCentral Section
+        rc_frame = ttk.LabelFrame(main_frame, text="RingCentral Credentials", padding="10")
+        rc_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+
+        ttk.Label(rc_frame, text="JWT Token:").grid(row=0, column=0, sticky=tk.W)
+        self.rc_jwt = ttk.Entry(rc_frame, width=50, show="*")
+        self.rc_jwt.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.rc_jwt.bind('<KeyRelease>', self.validate_fields)
+
+        ttk.Label(rc_frame, text="Client ID:").grid(row=1, column=0, sticky=tk.W)
+        self.rc_id = ttk.Entry(rc_frame, width=50)
+        self.rc_id.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.rc_id.bind('<KeyRelease>', self.validate_fields)
+
+        ttk.Label(rc_frame, text="Client Secret:").grid(row=2, column=0, sticky=tk.W)
+        self.rc_secret = ttk.Entry(rc_frame, width=50, show="*")
+        self.rc_secret.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.rc_secret.bind('<KeyRelease>', self.validate_fields)
+
+        ttk.Label(rc_frame, text="Account ID:").grid(row=3, column=0, sticky=tk.W)
+        self.rc_account = ttk.Entry(rc_frame, width=50)
+        self.rc_account.grid(row=3, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.rc_account.insert(0, "~")
+        self.rc_account.bind('<KeyRelease>', self.validate_fields)
+
+        rc_buttons_frame = ttk.Frame(rc_frame)
+        rc_buttons_frame.grid(row=4, column=0, columnspan=2, pady=10)
+
+        ttk.Button(rc_buttons_frame, text="Verify RingCentral", command=self.verify_rc).pack(side=tk.LEFT, padx=5)
+        ttk.Button(rc_buttons_frame, text="Check Existing", command=self.check_rc).pack(side=tk.LEFT, padx=5)
+
+        # Zoho Section
+        zoho_frame = ttk.LabelFrame(main_frame, text="Zoho Credentials", padding="10")
+        zoho_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
+
+        ttk.Label(zoho_frame, text="Client ID:").grid(row=0, column=0, sticky=tk.W)
+        self.zoho_id = ttk.Entry(zoho_frame, width=50)
+        self.zoho_id.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.zoho_id.bind('<KeyRelease>', self.validate_fields)
+
+        ttk.Label(zoho_frame, text="Client Secret:").grid(row=1, column=0, sticky=tk.W)
+        self.zoho_secret = ttk.Entry(zoho_frame, width=50, show="*")
+        self.zoho_secret.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.zoho_secret.bind('<KeyRelease>', self.validate_fields)
+
+        ttk.Label(zoho_frame, text="Refresh Token:").grid(row=2, column=0, sticky=tk.W)
+        self.zoho_refresh = ttk.Entry(zoho_frame, width=50, show="*")
+        self.zoho_refresh.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.zoho_refresh.bind('<KeyRelease>', self.validate_fields)
+
+        zoho_buttons_frame = ttk.Frame(zoho_frame)
+        zoho_buttons_frame.grid(row=3, column=0, columnspan=2, pady=10)
+
+        ttk.Button(zoho_buttons_frame, text="Verify Zoho", command=self.verify_zoho).pack(side=tk.LEFT, padx=5)
+        ttk.Button(zoho_buttons_frame, text="Check Existing", command=self.check_zoho).pack(side=tk.LEFT, padx=5)
+
+        # Submit Button
+        self.submit_button = ttk.Button(main_frame, text="Submit", command=self.submit_credentials)
+        self.submit_button.grid(row=2, column=0, columnspan=2, pady=20)
+        self.submit_button.state(['disabled'])
+
+        # Load existing credentials if available
+        self.load_existing_credentials()
+        
+        # Initial validation
+        self.validate_fields()
+
+    def validate_fields(self, event=None):
+        """Validate all fields and enable/disable submit button accordingly"""
+        rc_valid = all([
+            self.rc_jwt.get().strip(),
+            self.rc_id.get().strip(),
+            self.rc_secret.get().strip(),
+            self.rc_account.get().strip()
+        ])
+        
+        zoho_valid = all([
+            self.zoho_id.get().strip(),
+            self.zoho_secret.get().strip(),
+            self.zoho_refresh.get().strip()
+        ])
+        
+        if rc_valid and zoho_valid:
+            self.submit_button.state(['!disabled'])
+        else:
+            self.submit_button.state(['disabled'])
+
+    def verify_rc(self):
+        """Verify RingCentral credentials"""
+        if not all([self.rc_jwt.get(), self.rc_id.get(), self.rc_secret.get(), self.rc_account.get()]):
+            messagebox.showerror("Error", "Please fill in all RingCentral fields")
+            return
+        messagebox.showinfo("Success", "RingCentral credentials verified")
+
+    def verify_zoho(self):
+        """Verify Zoho credentials"""
+        if not all([self.zoho_id.get(), self.zoho_secret.get(), self.zoho_refresh.get()]):
+            messagebox.showerror("Error", "Please fill in all Zoho fields")
+            return
+        messagebox.showinfo("Success", "Zoho credentials verified")
+
+    def check_rc(self):
+        """Check existing RingCentral credentials"""
+        try:
+            from secure_credentials import SecureCredentials
+            creds = SecureCredentials()
+            rc_creds = creds.get_rc_credentials()
+            if rc_creds:
+                messagebox.showinfo("Existing RingCentral Credentials",
+                    f"JWT: {rc_creds['jwt'][:4]}...\n"
+                    f"Client ID: {rc_creds['client_id'][:4]}...\n"
+                    f"Client Secret: {rc_creds['client_secret'][:4]}...\n"
+                    f"Account ID: {rc_creds['account_id']}")
+            else:
+                messagebox.showinfo("No Existing Credentials", "No RingCentral credentials found")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to check RingCentral credentials: {str(e)}")
+
+    def check_zoho(self):
+        """Check existing Zoho credentials"""
+        try:
+            from secure_credentials import SecureCredentials
+            creds = SecureCredentials()
+            zoho_creds = creds.get_zoho_credentials()
+            if zoho_creds:
+                messagebox.showinfo("Existing Zoho Credentials",
+                    f"Client ID: {zoho_creds['client_id'][:4]}...\n"
+                    f"Client Secret: {zoho_creds['client_secret'][:4]}...\n"
+                    f"Refresh Token: {zoho_creds['refresh_token'][:4]}...")
+            else:
+                messagebox.showinfo("No Existing Credentials", "No Zoho credentials found")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to check Zoho credentials: {str(e)}")
+
+    def load_existing_credentials(self):
+        """Load existing credentials into the form"""
+        try:
+            from secure_credentials import SecureCredentials
+            creds = SecureCredentials()
+            rc_creds = creds.get_rc_credentials()
+            zoho_creds = creds.get_zoho_credentials()
+
+            if rc_creds:
+                self.rc_jwt.insert(0, rc_creds['jwt'])
+                self.rc_id.insert(0, rc_creds['client_id'])
+                self.rc_secret.insert(0, rc_creds['client_secret'])
+                self.rc_account.insert(0, rc_creds['account_id'])
+
+            if zoho_creds:
+                self.zoho_id.insert(0, zoho_creds['client_id'])
+                self.zoho_secret.insert(0, zoho_creds['client_secret'])
+                self.zoho_refresh.insert(0, zoho_creds['refresh_token'])
+
+        except Exception as e:
+            logger.error("Failed to load existing credentials: %s", e)
+
+    def submit_credentials(self):
+        """Submit credentials to secure storage"""
+        try:
+            from secure_credentials import SecureCredentials
+            creds = SecureCredentials()
+
+            # Save RingCentral credentials
+            creds.save_rc_credentials(
+                jwt=self.rc_jwt.get(),
+                client_id=self.rc_id.get(),
+                client_secret=self.rc_secret.get(),
+                account_id=self.rc_account.get()
+            )
+
+            # Save Zoho credentials
+            creds.save_zoho_credentials(
+                client_id=self.zoho_id.get(),
+                client_secret=self.zoho_secret.get(),
+                refresh_token=self.zoho_refresh.get()
+            )
+
+            messagebox.showinfo("Success", "Credentials saved successfully!")
+            self.root.quit()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save credentials: {str(e)}")
 
 def main():
-    # Ensure virtual environment is activated
-    ensure_venv_activated()
-    
-    # Import SecureCredentials after ensuring venv is activated
-    from secure_credentials import SecureCredentials
-    
-    parser = argparse.ArgumentParser(description='Set up RingCentral and Zoho credentials')
-    
-    # RingCentral arguments
-    parser.add_argument('--rc-jwt', required=True, help='RingCentral JWT token')
-    parser.add_argument('--rc-id', required=True, help='RingCentral client ID')
-    parser.add_argument('--rc-secret', required=True, help='RingCentral client secret')
-    parser.add_argument('--rc-account', required=True, help='RingCentral account ID')
-    
-    # Zoho arguments
-    parser.add_argument('--zoho-id', required=True, help='Zoho client ID')
-    parser.add_argument('--zoho-secret', required=True, help='Zoho client secret')
-    parser.add_argument('--zoho-refresh', required=True, help='Zoho refresh token')
-    
-    args = parser.parse_args()
-    
-    if setup_credentials(args):
-        print("Credentials setup completed successfully!")
-    else:
-        print("Failed to set up credentials. Check the logs for details.")
+    """Main function"""
+    if not ensure_venv_activated():
+        messagebox.showerror("Error", "Failed to activate virtual environment")
+        return
 
-if __name__ == '__main__':
+    root = tk.Tk()
+    app = CredentialsGUI(root)
+    root.mainloop()
+
+if __name__ == "__main__":
     main() 
