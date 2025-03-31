@@ -36,7 +36,16 @@ if errorlevel 1 (
 :: Install required packages
 echo Installing required packages...
 python -m pip install --upgrade pip
-pip install requests cryptography python-dateutil pytz urllib3 certifi charset-normalizer idna pywin32 ringcentral python-dotenv
+pip install --upgrade requests cryptography python-dateutil pytz urllib3 certifi charset-normalizer idna pywin32 ringcentral python-dotenv tkinter
+
+:: Verify package installation
+echo Verifying package installation...
+python -c "import cryptography; import dotenv; import requests; import dateutil; import pytz; import urllib3; import certifi; import charset_normalizer; import idna; import win32api; import ringcentral; import tkinter; print('All required packages installed successfully!')"
+if errorlevel 1 (
+    echo Failed to install required packages.
+    pause
+    exit /b 1
+)
 
 :: Create data directory if it doesn't exist
 if not exist data mkdir data
