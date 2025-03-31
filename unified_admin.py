@@ -309,6 +309,7 @@ class CredentialsTab(ttk.Frame):
         # Main container frame
         main_frame = ttk.Frame(self)
         main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        main_frame.grid_rowconfigure(0, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
 
         # RingCentral Section
@@ -382,20 +383,107 @@ class CredentialsTab(ttk.Frame):
         self.load_existing_credentials()
 
     def verify_rc(self):
-        """Verify RingCentral credentials"""
+        """Verify RingCentral credentials by making an actual API call"""
         if not all([self.rc_jwt.get(), self.rc_id.get(), self.rc_secret.get(), self.rc_account.get()]):
             messagebox.showerror("Error", "Please fill in all RingCentral fields")
             return
-        messagebox.showinfo("Success", "RingCentral credentials verified")
-        self.submit_button.state(['!disabled'])  # Enable the submit button
+            
+        try:
+            # Get credentials from form
+            jwt_token = self.rc_jwt.get()
+            client_id = self.rc_id.get()
+            client_secret = self.rc_secret.get()
+            account_id = self.rc_account.get()
+            
+            # Use the RingCentral API to validate
+            url = "https://platform.ringcentral.com/restapi/oauth/token"
+            # Create Basic auth header
+            auth_str = f"{client_id}:{client_secret}"
+            auth_bytes = auth_str.encode('ascii')
+            base64_auth = base64.b64encode(auth_bytes).decode('ascii')
+            
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {base64_auth}"
+            }
+            data = {
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": jwt_token
+            }
+            
+            # Make the API request
+            response = requests.post(url, headers=headers, data=data)
+            response.raise_for_status()
+            
+            # If we get here, credentials are valid
+            messagebox.showinfo("Success", "RingCentral credentials verified successfully!")
+            self.submit_button.state(['!disabled'])  # Enable the submit button
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                messagebox.showerror("Authentication Error", "RingCentral credentials are invalid. Please check and try again.")
+            else:
+                messagebox.showerror("API Error", f"RingCentral API error: {str(e)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to verify RingCentral credentials: {str(e)}")
 
     def verify_zoho(self):
-        """Verify Zoho credentials"""
+        """Verify Zoho credentials by making an actual API call"""
         if not all([self.zoho_id.get(), self.zoho_secret.get(), self.zoho_refresh.get()]):
             messagebox.showerror("Error", "Please fill in all Zoho fields")
             return
-        messagebox.showinfo("Success", "Zoho credentials verified")
-        self.submit_button.state(['!disabled'])  # Enable the submit button
+            
+        try:
+            # Get credentials from form
+            client_id = self.zoho_id.get()
+            client_secret = self.zoho_secret.get()
+            refresh_token = self.zoho_refresh.get()
+            
+            # Use the Zoho API to validate
+            url = "https://accounts.zoho.com/oauth/v2/token"
+            data = {
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "refresh_token"
+            }
+            
+            # Make the API request
+            response = requests.post(url, data=data)
+            
+            # Log response details for debugging
+            logger.debug(f"Zoho API response: {response.status_code} - {response.text}")
+            
+            # Check response content
+            response_data = response.json()
+            
+            # Zoho may return error details in the JSON even with 200 status
+            if 'error' in response_data:
+                error_message = response_data.get('error_description', response_data.get('error', 'Unknown error'))
+                messagebox.showerror("Authentication Error", f"Zoho API error: {error_message}")
+                return
+                
+            if 'access_token' not in response_data:
+                messagebox.showerror("API Error", "Zoho API did not return an access token. Please check your credentials.")
+                return
+                
+            # If we get here, credentials are valid and we have an access token
+            messagebox.showinfo("Success", "Zoho credentials verified successfully!")
+            self.submit_button.state(['!disabled'])  # Enable the submit button
+            
+        except requests.exceptions.HTTPError as e:
+            messagebox.showerror("API Error", f"Zoho API error: {str(e)}")
+            logger.error(f"Zoho API HTTP error: {str(e)}")
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Connection Error", f"Could not connect to Zoho API: {str(e)}")
+            logger.error(f"Zoho API connection error: {str(e)}")
+        except ValueError as e:
+            # JSON parsing error
+            messagebox.showerror("Response Error", f"Invalid response from Zoho API: {str(e)}")
+            logger.error(f"Zoho API response parsing error: {str(e)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to verify Zoho credentials: {str(e)}")
+            logger.error(f"Zoho verification error: {str(e)}")
 
     def check_rc(self):
         """Check existing RingCentral credentials"""
@@ -457,10 +545,34 @@ class CredentialsTab(ttk.Frame):
             
             if self.storage.save_credentials(credentials):
                 messagebox.showinfo("Success", "Credentials saved successfully!")
+                
+                # Get reference to the parent notebook to access other tabs
+                notebook = self.winfo_parent()
+                notebook = self.nametowidget(notebook)
+                
+                # Refresh other tabs that depend on credentials
+                # Find the ExtensionsTab and LeadOwnersTab instances
+                for tab_id in notebook.tabs():
+                    tab = notebook.nametowidget(tab_id)
+                    # Refresh ExtensionsTab
+                    if hasattr(tab, 'rc_client') and hasattr(tab, 'load_available_queues'):
+                        # Reinitialize the RC client with new credentials
+                        tab.rc_client = RingCentralClient(self.storage)
+                        tab.load_available_queues()
+                        logger.info("Refreshed Extensions tab after credential update")
+                    
+                    # Refresh LeadOwnersTab
+                    if hasattr(tab, 'zoho_client') and hasattr(tab, 'load_users'):
+                        # Reinitialize the Zoho client with new credentials
+                        tab.zoho_client = ZohoClient(self.storage)
+                        tab.load_users()
+                        tab.load_roles()
+                        logger.info("Refreshed Lead Owners tab after credential update")
             else:
                 messagebox.showerror("Error", "Failed to save credentials")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save credentials: {str(e)}")
+            logger.error(f"Error saving credentials: {str(e)}")
 
 class ExtensionsTab(ttk.Frame):
     def __init__(self, parent, storage):
@@ -915,6 +1027,11 @@ class RunScriptTab(ttk.Frame):
         self.storage = storage
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
+        
+        # Set default date range (today)
+        self.start_date_default = datetime.now().replace(hour=0, minute=0, second=0)
+        self.end_date_default = datetime.now().replace(hour=23, minute=59, second=59)
+        
         self.create_widgets()
 
     def create_widgets(self):
@@ -947,29 +1064,204 @@ class RunScriptTab(ttk.Frame):
         date_frame = ttk.LabelFrame(main_frame, text="Date Range", padding="15")
         date_frame.grid(row=2, column=0, sticky="ew", pady=(0, 20))
         date_frame.grid_columnconfigure(1, weight=1)
+        date_frame.grid_columnconfigure(3, weight=1)
+
+        # Add calendar imports
+        try:
+            import tkcalendar
+            self.has_tkcalendar = True
+        except ImportError:
+            self.has_tkcalendar = False
+            logger.warning("tkcalendar not installed. Using text entry for date selection.")
 
         # Start Date and Time
-        ttk.Label(date_frame, text="Start Date and Time:").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
-        self.start_date = ttk.Entry(date_frame, width=30)
-        self.start_date.grid(row=0, column=1, sticky="ew", pady=5)
-        self.start_date.insert(0, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        ttk.Label(date_frame, text="Start Date:").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
+        
+        # Date picker frame for start date
+        start_date_frame = ttk.Frame(date_frame)
+        start_date_frame.grid(row=0, column=1, sticky="ew", pady=5)
+        
+        if self.has_tkcalendar:
+            self.start_date_cal = tkcalendar.DateEntry(
+                start_date_frame, 
+                width=12, 
+                background='darkblue', 
+                foreground='white', 
+                borderwidth=2,
+                date_pattern='yyyy-mm-dd',
+                year=self.start_date_default.year,
+                month=self.start_date_default.month,
+                day=self.start_date_default.day
+            )
+            self.start_date_cal.pack(side=tk.LEFT, padx=(0, 5))
+        else:
+            self.start_date_var = tk.StringVar(value=self.start_date_default.strftime("%Y-%m-%d"))
+            self.start_date_entry = ttk.Entry(start_date_frame, width=12, textvariable=self.start_date_var)
+            self.start_date_entry.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Time entry for start time
+        ttk.Label(start_date_frame, text="Time:").pack(side=tk.LEFT, padx=(5, 5))
+        
+        start_hour_var = tk.StringVar(value=f"{self.start_date_default.hour:02d}")
+        self.start_hour = ttk.Combobox(start_date_frame, width=3, textvariable=start_hour_var, state="readonly")
+        self.start_hour['values'] = [f"{i:02d}" for i in range(24)]
+        self.start_hour.pack(side=tk.LEFT)
+        
+        ttk.Label(start_date_frame, text=":").pack(side=tk.LEFT)
+        
+        start_minute_var = tk.StringVar(value=f"{self.start_date_default.minute:02d}")
+        self.start_minute = ttk.Combobox(start_date_frame, width=3, textvariable=start_minute_var, state="readonly")
+        self.start_minute['values'] = [f"{i:02d}" for i in range(0, 60, 5)]
+        self.start_minute.pack(side=tk.LEFT)
+        
+        ttk.Label(start_date_frame, text=":").pack(side=tk.LEFT)
+        
+        start_second_var = tk.StringVar(value=f"{self.start_date_default.second:02d}")
+        self.start_second = ttk.Combobox(start_date_frame, width=3, textvariable=start_second_var, state="readonly")
+        self.start_second['values'] = [f"{i:02d}" for i in range(0, 60)]
+        self.start_second.pack(side=tk.LEFT)
 
         # End Date and Time
-        ttk.Label(date_frame, text="End Date and Time:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=5)
-        self.end_date = ttk.Entry(date_frame, width=30)
-        self.end_date.grid(row=1, column=1, sticky="ew", pady=5)
-        self.end_date.insert(0, datetime.now().replace(hour=23, minute=59, second=59).strftime("%Y-%m-%d %H:%M:%S"))
+        ttk.Label(date_frame, text="End Date:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=5)
+        
+        # Date picker frame for end date
+        end_date_frame = ttk.Frame(date_frame)
+        end_date_frame.grid(row=1, column=1, sticky="ew", pady=5)
+        
+        if self.has_tkcalendar:
+            self.end_date_cal = tkcalendar.DateEntry(
+                end_date_frame, 
+                width=12, 
+                background='darkblue', 
+                foreground='white', 
+                borderwidth=2,
+                date_pattern='yyyy-mm-dd',
+                year=self.end_date_default.year,
+                month=self.end_date_default.month,
+                day=self.end_date_default.day
+            )
+            self.end_date_cal.pack(side=tk.LEFT, padx=(0, 5))
+        else:
+            self.end_date_var = tk.StringVar(value=self.end_date_default.strftime("%Y-%m-%d"))
+            self.end_date_entry = ttk.Entry(end_date_frame, width=12, textvariable=self.end_date_var)
+            self.end_date_entry.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Time entry for end time
+        ttk.Label(end_date_frame, text="Time:").pack(side=tk.LEFT, padx=(5, 5))
+        
+        end_hour_var = tk.StringVar(value=f"{self.end_date_default.hour:02d}")
+        self.end_hour = ttk.Combobox(end_date_frame, width=3, textvariable=end_hour_var, state="readonly")
+        self.end_hour['values'] = [f"{i:02d}" for i in range(24)]
+        self.end_hour.pack(side=tk.LEFT)
+        
+        ttk.Label(end_date_frame, text=":").pack(side=tk.LEFT)
+        
+        end_minute_var = tk.StringVar(value=f"{self.end_date_default.minute:02d}")
+        self.end_minute = ttk.Combobox(end_date_frame, width=3, textvariable=end_minute_var, state="readonly")
+        self.end_minute['values'] = [f"{i:02d}" for i in range(0, 60, 5)]
+        self.end_minute.pack(side=tk.LEFT)
+        
+        ttk.Label(end_date_frame, text=":").pack(side=tk.LEFT)
+        
+        end_second_var = tk.StringVar(value=f"{self.end_date_default.second:02d}")
+        self.end_second = ttk.Combobox(end_date_frame, width=3, textvariable=end_second_var, state="readonly")
+        self.end_second['values'] = [f"{i:02d}" for i in range(0, 60)]
+        self.end_second.pack(side=tk.LEFT)
+
+        # Preset buttons for common date ranges
+        preset_frame = ttk.Frame(date_frame)
+        preset_frame.grid(row=2, column=0, columnspan=2, sticky="w", pady=10)
+        
+        ttk.Button(preset_frame, text="Today", command=lambda: self.set_date_range("today")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(preset_frame, text="Yesterday", command=lambda: self.set_date_range("yesterday")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(preset_frame, text="Last 7 Days", command=lambda: self.set_date_range("last7days")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(preset_frame, text="This Month", command=lambda: self.set_date_range("thismonth")).pack(side=tk.LEFT, padx=5)
 
         # Dry Run Checkbox
         self.dry_run_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(date_frame, text="Run in Dry-Run Mode (Preview Only)", variable=self.dry_run_var).grid(row=2, column=0, columnspan=2, pady=15)
+        ttk.Checkbutton(date_frame, text="Run in Dry-Run Mode (Preview Only)", variable=self.dry_run_var).grid(row=3, column=0, columnspan=2, pady=15)
 
         # Run Button
         run_button = ttk.Button(main_frame, text="Run Script", command=self.run_script)
-        run_button.grid(row=3, column=0, pady=20)
+        run_button.grid(row=4, column=0, pady=20)
 
         # Bind script selection change event
         self.script_combo.bind('<<ComboboxSelected>>', self.on_script_selected)
+
+    def set_date_range(self, preset):
+        """Set date range based on preset values"""
+        now = datetime.now()
+        
+        if preset == "today":
+            start = now.replace(hour=0, minute=0, second=0)
+            end = now.replace(hour=23, minute=59, second=59)
+        elif preset == "yesterday":
+            yesterday = now - timedelta(days=1)
+            start = yesterday.replace(hour=0, minute=0, second=0)
+            end = yesterday.replace(hour=23, minute=59, second=59)
+        elif preset == "last7days":
+            start = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0)
+            end = now.replace(hour=23, minute=59, second=59)
+        elif preset == "thismonth":
+            start = now.replace(day=1, hour=0, minute=0, second=0)
+            end = now.replace(hour=23, minute=59, second=59)
+        else:
+            return
+            
+        # Update the date pickers
+        if self.has_tkcalendar:
+            self.start_date_cal.set_date(start)
+            self.end_date_cal.set_date(end)
+        else:
+            self.start_date_var.set(start.strftime("%Y-%m-%d"))
+            self.end_date_var.set(end.strftime("%Y-%m-%d"))
+            
+        # Update the time dropdowns
+        self.start_hour.set(f"{start.hour:02d}")
+        self.start_minute.set(f"{start.minute:02d}")
+        self.start_second.set(f"{start.second:02d}")
+        
+        self.end_hour.set(f"{end.hour:02d}")
+        self.end_minute.set(f"{end.minute:02d}")
+        self.end_second.set(f"{end.second:02d}")
+
+    def get_formatted_dates(self):
+        """Get formatted date strings from the UI components"""
+        try:
+            # Get the date component
+            if self.has_tkcalendar:
+                start_date = self.start_date_cal.get_date()
+                end_date = self.end_date_cal.get_date()
+            else:
+                start_date = datetime.strptime(self.start_date_var.get(), "%Y-%m-%d").date()
+                end_date = datetime.strptime(self.end_date_var.get(), "%Y-%m-%d").date()
+                
+            # Get the time component
+            start_hour = int(self.start_hour.get())
+            start_minute = int(self.start_minute.get())
+            start_second = int(self.start_second.get())
+            
+            end_hour = int(self.end_hour.get())
+            end_minute = int(self.end_minute.get())
+            end_second = int(self.end_second.get())
+            
+            # Combine date and time
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            start_datetime = start_datetime.replace(hour=start_hour, minute=start_minute, second=start_second)
+            
+            end_datetime = datetime.combine(end_date, datetime.min.time())
+            end_datetime = end_datetime.replace(hour=end_hour, minute=end_minute, second=end_second)
+            
+            # Format as string
+            start_str = start_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            end_str = end_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            
+            return start_str, end_str
+            
+        except Exception as e:
+            logger.error(f"Error formatting dates: {str(e)}")
+            messagebox.showerror("Error", f"Invalid date format: {str(e)}")
+            return None, None
 
     def on_script_selected(self, event=None):
         """Update description when script is selected"""
@@ -996,9 +1288,11 @@ class RunScriptTab(ttk.Frame):
             }
             script_name = script_map[self.script_var.get()]
 
-            # Get date range
-            start_date = self.start_date.get()
-            end_date = self.end_date.get()
+            # Get date range from the UI
+            start_date, end_date = self.get_formatted_dates()
+            if not start_date or not end_date:
+                return  # Error already shown in get_formatted_dates
+                
             dry_run = self.dry_run_var.get()
 
             # Create logs directory if it doesn't exist

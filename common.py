@@ -10,7 +10,14 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 import subprocess
-import pkg_resources
+
+# Try to import pkg_resources, but provide a fallback if it's not available
+try:
+    import pkg_resources
+    HAS_PKG_RESOURCES = True
+except ImportError:
+    HAS_PKG_RESOURCES = False
+    print("Warning: pkg_resources not found. Dependency checking will be limited.")
 
 # Standard logging format and configuration
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -27,17 +34,28 @@ def check_and_install_dependencies():
         'certifi': '>=2023.7.22,<2024.0',
         'charset-normalizer': '>=3.3.0,<4.0.0',
         'idna': '>=3.4,<4.0.0',
-        'python-dotenv': '>=1.0.0,<2.0.0'
+        'python-dotenv': '>=1.0.0,<2.0.0',
+        'setuptools': '>=40.0.0'
     }
     
     missing_packages = []
     
     # Check each required package
-    for package, version_spec in required_packages.items():
-        try:
-            pkg_resources.require(f"{package}{version_spec}")
-        except (pkg_resources.DistributionNotFound, pkg_resources.VersionConflict):
-            missing_packages.append(f"{package}{version_spec}")
+    if HAS_PKG_RESOURCES:
+        # Use pkg_resources if available
+        for package, version_spec in required_packages.items():
+            try:
+                pkg_resources.require(f"{package}{version_spec}")
+            except (pkg_resources.DistributionNotFound, pkg_resources.VersionConflict):
+                missing_packages.append(f"{package}{version_spec}")
+    else:
+        # Fallback method if pkg_resources is not available
+        # Just check if packages can be imported
+        for package in required_packages:
+            try:
+                __import__(package)
+            except ImportError:
+                missing_packages.append(f"{package}")
     
     if missing_packages:
         print("Installing required dependencies...")

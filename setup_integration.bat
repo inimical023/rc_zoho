@@ -36,11 +36,12 @@ if errorlevel 1 (
 :: Install required packages
 echo Installing required packages...
 python -m pip install --upgrade pip
+python -m pip install setuptools>=40.0.0
 pip install -r requirements.txt
 
 :: Verify package installation
 echo Verifying package installation...
-python -c "import sys; missing = []; packages = ['cryptography', 'dotenv', 'requests', 'dateutil', 'pytz', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'win32api', 'ringcentral', 'tkinter']; [missing.append(pkg) for pkg in packages if pkg not in sys.modules and not __import__(pkg, fromlist=['']) in (1,)]; print('Missing packages: ' + ', '.join(missing) if missing else 'All required packages installed successfully!')"
+python -c "import sys; missing = []; packages = ['setuptools', 'cryptography', 'dotenv', 'requests', 'dateutil', 'pytz', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'win32api', 'ringcentral', 'tkinter']; [missing.append(pkg) for pkg in packages if pkg not in sys.modules and not __import__(pkg, fromlist=['']) in (1,)]; print('Missing packages: ' + ', '.join(missing) if missing else 'All required packages installed successfully!')"
 if errorlevel 1 (
     echo Some packages failed to install, but continuing setup process.
 )
