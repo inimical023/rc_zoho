@@ -39,6 +39,11 @@ call :log "  RingCentral-Zoho Integration Setup"
 call :log "=========================================================="
 call :log ""
 
+:: Log the file creation time
+for /f "tokens=1,2,3,4* delims=/ " %%a in ('powershell -Command "Get-Item '%~f0' | Select-Object -ExpandProperty LastWriteTime | Get-Date -f 'MM/dd/yyyy HH:mm:ss'"') do (
+    call :log "Setup script timestamp: %%a/%%b/%%c %%d"
+)
+
 :: Verify GitHub connectivity
 call :log "Verifying GitHub connectivity..."
 curl -s -o nul -w "%%{http_code}" https://raw.githubusercontent.com/inimical023/rc_zoho/main/README.md > github_status.txt

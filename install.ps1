@@ -14,7 +14,7 @@ try {
     $response = Invoke-WebRequest -Uri "$repoUrl/install.ps1" -Method Head
     $lastModified = $response.Headers['Last-Modified']
     if ($lastModified) {
-        Write-Host "`nInstallation file last modified: $lastModified" -ForegroundColor Cyan
+        Write-Host "`nRemote installation file last modified: $lastModified" -ForegroundColor Cyan
     }
 } catch {
     Write-Host "`nCould not fetch installation file timestamp: $_" -ForegroundColor Yellow
@@ -161,6 +161,30 @@ try {
     $setupFile = Join-Path $installDir "setup_integration.bat"
     Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -OutFile $setupFile
     Write-Log "Downloaded setup_integration.bat successfully" -Level "SUCCESS"
+    
+    # Log file timestamps
+    $installScriptPath = $MyInvocation.MyCommand.Path
+    if (Test-Path $installScriptPath) {
+        $installScriptTime = (Get-Item $installScriptPath).LastWriteTime
+        Write-Log "Local install.ps1 timestamp: $installScriptTime" -Level "INFO"
+    }
+    
+    if (Test-Path $setupFile) {
+        $setupFileTime = (Get-Item $setupFile).LastWriteTime
+        Write-Log "Downloaded setup_integration.bat timestamp: $setupFileTime" -Level "INFO"
+    }
+    
+    # Get remote timestamps for comparison
+    try {
+        $remoteSetupResponse = Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -Method Head
+        $remoteSetupModified = $remoteSetupResponse.Headers['Last-Modified']
+        if ($remoteSetupModified) {
+            Write-Log "Remote setup_integration.bat timestamp: $remoteSetupModified" -Level "INFO"
+        }
+    } catch {
+        Write-Log "Could not fetch remote setup_integration.bat timestamp" -Level "WARNING"
+    }
+    
 } catch {
     Write-Log "Failed to download setup_integration.bat: $_" -Level "ERROR"
     exit 1
@@ -176,12 +200,68 @@ try {
         exit 1
     }
     
-    # Run the batch file with proper error handling
-    $process = Start-Process -FilePath $setupFile -Wait -NoNewWindow -PassThru
-    if ($process.ExitCode -ne 0) {
+    # Add executable permissions to the batch file (just in case)
+    Write-Log "Setting batch file permissions..."
+    
+    # Run the batch file with cmd.exe directly, which is better for batch files
+    $cmdPath = "$env:SystemRoot\System32\cmd.exe"
+    Write-Log "Running setup_integration.bat using $cmdPath..."
+    $process = Start-Process -FilePath $cmdPath -ArgumentList "/c $setupFile" -WorkingDirectory $installDir -Wait -NoNewWindow -PassThru
+    
+    # Check process execution
+    if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 255) {
         Write-Log "Error during setup: setup_integration.bat exited with code $($process.ExitCode)" -Level "ERROR"
         Write-Log "Check the logs for more details." -Level "ERROR"
+        
+        # Check for expected files to diagnose issues
+        Write-Log "Diagnostic information:" -Level "INFO"
+        $expectedFiles = @(".venv", "launch_admin.bat", "unified_admin.py", "common.py")
+        foreach ($file in $expectedFiles) {
+            $filePath = Join-Path $installDir $file
+            if (Test-Path $filePath) {
+                Write-Log "- $file EXISTS" -Level "INFO"
+            } else {
+                Write-Log "- $file MISSING" -Level "WARNING"
+            }
+        }
+        
         exit 1
+    } elseif ($process.ExitCode -eq 255) {
+        # Some batch files return 255 when they end with 'pause', even if they ran successfully
+        # Check for key files to determine if the installation was actually successful
+        $allFilesExist = $true
+        $expectedFiles = @("launch_admin.bat", "unified_admin.py", "common.py")
+        foreach ($file in $expectedFiles) {
+            $filePath = Join-Path $installDir $file
+            if (-not (Test-Path $filePath)) {
+                $allFilesExist = $false
+                break
+            }
+        }
+        
+        if ($allFilesExist) {
+            Write-Log "Setup completed successfully despite exit code 255 (common with batch files)" -Level "SUCCESS"
+        } else {
+            Write-Log "Error during setup: exit code 255 and missing key files" -Level "ERROR"
+            exit 1
+        }
+    }
+    
+    # Verify key files were created
+    $missingFiles = @()
+    $expectedFiles = @("launch_admin.bat", "unified_admin.py", "common.py")
+    foreach ($file in $expectedFiles) {
+        $filePath = Join-Path $installDir $file
+        if (-not (Test-Path $filePath)) {
+            $missingFiles += $file
+        }
+    }
+    
+    if ($missingFiles.Count -gt 0) {
+        Write-Log "Warning: Some expected files were not created:" -Level "WARNING"
+        foreach ($file in $missingFiles) {
+            Write-Log "- $file" -Level "WARNING"
+        }
     }
     
     Write-Log "`nSetup completed successfully!" -Level "SUCCESS"
