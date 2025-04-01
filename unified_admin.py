@@ -1902,7 +1902,7 @@ class UnifiedAdminGUI:
         
         # Use fixed size of 1400x1000
         window_width = 1400
-        window_height = 1000
+        window_height = 1100
         
         # Center the window
         x = (screen_width - window_width) // 2

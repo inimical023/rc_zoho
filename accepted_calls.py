@@ -635,7 +635,7 @@ class ZohoClient:
         phone_number = call['from']['phoneNumber']
         extension_id = call['to'].get('extensionId')
         lead_source = extension_names.get(str(extension_id), "Unknown")
-        lead_status = "Accepted Call"  # Set Lead Status to "Accepted Call"
+        lead_status = "Accepted Call No Lead Created"  # Set Lead Status to "Accepted Call No Lead Created"
         first_name = "Unknown"
         last_name = "Caller"
 
