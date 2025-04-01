@@ -101,11 +101,9 @@ class SecureCredentials:
             decrypted_data = self.cipher_suite.decrypt(encrypted_data)
             credentials = json.loads(decrypted_data.decode())
             
-            # Check if credentials are expired (1 hour)
-            timestamp = datetime.fromisoformat(credentials['timestamp'])
-            if datetime.now() - timestamp > timedelta(hours=1):
-                logger.warning("Credentials have expired")
-                return None
+            # Store last access time but don't expire credentials
+            # This allows tokens to be managed by their own logic
+            credentials['last_accessed'] = datetime.now().isoformat()
             
             return credentials
         except Exception as e:

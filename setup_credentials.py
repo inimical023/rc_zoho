@@ -147,11 +147,43 @@ class CredentialsGUI:
         messagebox.showinfo("Success", "RingCentral credentials verified")
 
     def verify_zoho(self):
-        """Verify Zoho credentials"""
+        """Verify Zoho credentials and refresh the token if needed"""
         if not all([self.zoho_id.get(), self.zoho_secret.get(), self.zoho_refresh.get()]):
             messagebox.showerror("Error", "Please fill in all Zoho fields")
             return
-        messagebox.showinfo("Success", "Zoho credentials verified")
+        
+        try:
+            # Attempt to refresh the Zoho token as a verification step
+            import requests
+            
+            refresh_url = "https://accounts.zoho.com/oauth/v2/token"
+            payload = {
+                'refresh_token': self.zoho_refresh.get(),
+                'client_id': self.zoho_id.get(),
+                'client_secret': self.zoho_secret.get(),
+                'grant_type': 'refresh_token'
+            }
+            
+            response = requests.post(refresh_url, data=payload)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'access_token' in data:
+                    # Success - we have a valid token
+                    messagebox.showinfo("Success", "Zoho credentials verified successfully")
+                    # Store the new access token if needed
+                    # self.zoho_access = data['access_token']
+                    return True
+            else:
+                error_msg = f"Failed to verify Zoho credentials: {response.text}"
+                logger.error(error_msg)
+                messagebox.showerror("Error", "Zoho credentials verification failed. Please check your client ID, secret, and refresh token.")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Error verifying Zoho credentials: {str(e)}")
+            messagebox.showerror("Error", f"Failed to verify Zoho credentials: {str(e)}")
+            return False
 
     def check_rc(self):
         """Check existing RingCentral credentials"""
