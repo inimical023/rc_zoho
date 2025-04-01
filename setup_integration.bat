@@ -112,10 +112,9 @@ if exist requirements.txt (
 :: Verify package installation using a batch script approach
 call :log "Verifying package installation..."
 
-:: Create a simple verification script with proper indentation handling
-echo import pkg_resources, json > verify_packages.py
+:: Create a robust verification script with explicit exit codes
+echo import pkg_resources, sys > verify_packages.py
 echo print("Checking for required packages...") >> verify_packages.py
-echo packages_status = {} >> verify_packages.py
 echo secure_versions = { "cryptography": "3.4.8", "urllib3": "1.26.5", "requests": "2.25.1", "certifi": "2021.10.8" } >> verify_packages.py
 echo vulnerable = [] >> verify_packages.py
 (
@@ -127,12 +126,15 @@ echo vulnerable = [] >> verify_packages.py
     echo             print(f"{pkg}: {ver} (update to {min_ver} recommended)")
     echo         else:
     echo             print(f"{pkg}: {ver} (OK)")
-    echo     except:
-    echo         print(f"{pkg}: Not found")
+    echo     except Exception as e:
+    echo         print(f"{pkg}: Not found ({e})")
     echo if vulnerable:
     echo     print("SECURITY ALERT: Vulnerable packages found")
     echo     with open("upgrade_list.txt", "w") as f:
     echo         f.write(" ".join(vulnerable))
+    echo     sys.exit(1)
+    echo else:
+    echo     sys.exit(0)
 ) >> verify_packages.py
 
 :: Run verification script
