@@ -5,12 +5,30 @@ import logging
 import requests
 import base64
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, timedelta
 from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 import subprocess
+
+# Try importing ttkbootstrap for modern UI styling
+try:
+    import ttkbootstrap as ttk
+    from ttkbootstrap.constants import *
+    from ttkbootstrap import Style
+    HAS_TTKBOOTSTRAP = True
+except ImportError:
+    import tkinter.ttk as ttk
+    HAS_TTKBOOTSTRAP = False
+    logging.warning("ttkbootstrap module not found. Using standard ttk theme.")
+
+# Try importing PIL for image handling
+try:
+    from PIL import Image, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+    logging.warning("PIL module not found. Icons will not be available.")
 
 # Try importing optional dependencies with proper error handling
 try:
@@ -34,6 +52,21 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger('unified_admin')
+
+# Define colors
+COLORS = {
+    "primary": "#007bff",
+    "secondary": "#6c757d",
+    "success": "#28a745",
+    "danger": "#dc3545",
+    "warning": "#ffc107",
+    "info": "#17a2b8",
+    "light": "#f8f9fa",
+    "dark": "#343a40",
+    "text": "#212529",
+    "bg_light": "#ffffff",
+    "bg_dark": "#343a40"
+}
 
 class SecureStorage:
     """Unified secure storage for credentials and configuration"""
@@ -314,18 +347,26 @@ class CredentialsTab(ttk.Frame):
         self.create_widgets()
 
     def create_widgets(self):
-        # Main container frame
-        main_frame = ttk.Frame(self)
+        # Main container frame with rounded corners if using ttkbootstrap
+        if HAS_TTKBOOTSTRAP:
+            main_frame = ttk.Frame(self, bootstyle="default", padding="15")
+        else:
+            main_frame = ttk.Frame(self, padding="15")
+            
         main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         main_frame.grid_rowconfigure(0, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
 
-        # RingCentral Section
-        rc_frame = ttk.LabelFrame(main_frame, text="RingCentral Credentials", padding="15")
+        # RingCentral Section with improved styling
+        if HAS_TTKBOOTSTRAP:
+            rc_frame = ttk.LabelFrame(main_frame, text="RingCentral Credentials", padding="20", bootstyle="primary")
+        else:
+            rc_frame = ttk.LabelFrame(main_frame, text="RingCentral Credentials", padding="20")
+            
         rc_frame.grid(row=0, column=0, sticky="ew", pady=(0, 20))
         rc_frame.grid_columnconfigure(1, weight=1)
 
-        # RingCentral fields
+        # RingCentral fields with better styling
         self.rc_jwt = ttk.Entry(rc_frame, width=50, show="*")
         self.rc_id = ttk.Entry(rc_frame, width=50)
         self.rc_secret = ttk.Entry(rc_frame, width=50, show="*")
@@ -339,26 +380,45 @@ class CredentialsTab(ttk.Frame):
         ]
 
         for i, (label, entry) in enumerate(fields):
-            ttk.Label(rc_frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 10), pady=5)
-            entry.grid(row=i, column=1, sticky="ew", pady=5)
+            ttk.Label(rc_frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 10), pady=7)
+            entry.grid(row=i, column=1, sticky="ew", pady=7)
 
         self.rc_account.insert(0, "~")
 
-        # RingCentral buttons
+        # RingCentral buttons with improved styling
         rc_buttons_frame = ttk.Frame(rc_frame)
         rc_buttons_frame.grid(row=len(fields), column=0, columnspan=2, pady=15)
         rc_buttons_frame.grid_columnconfigure(0, weight=1)
         rc_buttons_frame.grid_columnconfigure(1, weight=1)
 
-        ttk.Button(rc_buttons_frame, text="Verify RingCentral", command=self.verify_rc).grid(row=0, column=0, padx=5)
-        ttk.Button(rc_buttons_frame, text="Check Existing", command=self.check_rc).grid(row=0, column=1, padx=5)
+        if HAS_TTKBOOTSTRAP:
+            ttk.Button(
+                rc_buttons_frame, 
+                text="Verify RingCentral", 
+                command=self.verify_rc,
+                bootstyle="primary"
+            ).grid(row=0, column=0, padx=5)
+            
+            ttk.Button(
+                rc_buttons_frame, 
+                text="Check Existing", 
+                command=self.check_rc,
+                bootstyle="info"
+            ).grid(row=0, column=1, padx=5)
+        else:
+            ttk.Button(rc_buttons_frame, text="Verify RingCentral", command=self.verify_rc).grid(row=0, column=0, padx=5)
+            ttk.Button(rc_buttons_frame, text="Check Existing", command=self.check_rc).grid(row=0, column=1, padx=5)
 
-        # Zoho Section
-        zoho_frame = ttk.LabelFrame(main_frame, text="Zoho Credentials", padding="15")
+        # Zoho Section with improved styling
+        if HAS_TTKBOOTSTRAP:
+            zoho_frame = ttk.LabelFrame(main_frame, text="Zoho Credentials", padding="20", bootstyle="primary")
+        else:
+            zoho_frame = ttk.LabelFrame(main_frame, text="Zoho Credentials", padding="20")
+            
         zoho_frame.grid(row=1, column=0, sticky="ew", pady=(0, 20))
         zoho_frame.grid_columnconfigure(1, weight=1)
 
-        # Zoho fields
+        # Zoho fields with better styling
         self.zoho_id = ttk.Entry(zoho_frame, width=50)
         self.zoho_secret = ttk.Entry(zoho_frame, width=50, show="*")
         self.zoho_refresh = ttk.Entry(zoho_frame, width=50, show="*")
@@ -370,20 +430,45 @@ class CredentialsTab(ttk.Frame):
         ]
 
         for i, (label, entry) in enumerate(fields):
-            ttk.Label(zoho_frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 10), pady=5)
-            entry.grid(row=i, column=1, sticky="ew", pady=5)
+            ttk.Label(zoho_frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 10), pady=7)
+            entry.grid(row=i, column=1, sticky="ew", pady=7)
 
-        # Zoho buttons
+        # Zoho buttons with improved styling
         zoho_buttons_frame = ttk.Frame(zoho_frame)
         zoho_buttons_frame.grid(row=len(fields), column=0, columnspan=2, pady=15)
         zoho_buttons_frame.grid_columnconfigure(0, weight=1)
         zoho_buttons_frame.grid_columnconfigure(1, weight=1)
 
-        ttk.Button(zoho_buttons_frame, text="Verify Zoho", command=self.verify_zoho).grid(row=0, column=0, padx=5)
-        ttk.Button(zoho_buttons_frame, text="Check Existing", command=self.check_zoho).grid(row=0, column=1, padx=5)
+        if HAS_TTKBOOTSTRAP:
+            ttk.Button(
+                zoho_buttons_frame, 
+                text="Verify Zoho", 
+                command=self.verify_zoho,
+                bootstyle="primary"
+            ).grid(row=0, column=0, padx=5)
+            
+            ttk.Button(
+                zoho_buttons_frame, 
+                text="Check Existing", 
+                command=self.check_zoho,
+                bootstyle="info"
+            ).grid(row=0, column=1, padx=5)
+        else:
+            ttk.Button(zoho_buttons_frame, text="Verify Zoho", command=self.verify_zoho).grid(row=0, column=0, padx=5)
+            ttk.Button(zoho_buttons_frame, text="Check Existing", command=self.check_zoho).grid(row=0, column=1, padx=5)
 
-        # Submit Button
-        self.submit_button = ttk.Button(main_frame, text="Submit", command=self.submit_credentials)
+        # Submit Button with improved styling
+        if HAS_TTKBOOTSTRAP:
+            self.submit_button = ttk.Button(
+                main_frame, 
+                text="Submit", 
+                command=self.submit_credentials,
+                bootstyle="success",
+                width=15
+            )
+        else:
+            self.submit_button = ttk.Button(main_frame, text="Submit", command=self.submit_credentials)
+            
         self.submit_button.grid(row=2, column=0, pady=20)
         self.submit_button.state(['disabled'])
 
@@ -1659,8 +1744,26 @@ A log file will be created at:
 class UnifiedAdminGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("RingCentral-Zoho Integration Admin Tools")
+        
+        # Set up theme
+        if HAS_TTKBOOTSTRAP:
+            style = Style(theme="cosmo")  # Choose from: cosmo, flatly, litera, minty, lumen, sandstone, yeti, etc.
+            self.root.title("RingCentral-Zoho Integration • Admin Tools")
+        else:
+            self.root.title("RingCentral-Zoho Integration Admin Tools")
+            
         self.root.geometry("1200x800")
+        self.root.minsize(1000, 700)  # Set minimum window size for better usability
+        
+        # Set application icon if PIL is available
+        if HAS_PIL:
+            try:
+                # Create a simple icon with the app initials
+                icon_size = 64
+                icon = Image.new('RGB', (icon_size, icon_size), COLORS["primary"])
+                self.load_and_set_icon()
+            except Exception as e:
+                logger.error(f"Failed to set application icon: {e}")
         
         # Initialize storage and clients
         self.storage = SecureStorage()
@@ -1672,14 +1775,39 @@ class UnifiedAdminGUI:
         root.grid_columnconfigure(0, weight=1)
         
         # Create main frame
-        self.main_frame = ttk.Frame(root, padding="10")
+        self.main_frame = ttk.Frame(root, padding="15")
         self.main_frame.grid(row=0, column=0, sticky="nsew")
         self.main_frame.grid_rowconfigure(0, weight=1)
         self.main_frame.grid_columnconfigure(0, weight=1)
 
+        # Create header frame
+        self.header_frame = ttk.Frame(self.main_frame)
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=(0, 10))
+        
+        # Add app title and logo in header
+        title_label = ttk.Label(
+            self.header_frame, 
+            text="RingCentral-Zoho Integration", 
+            font=("Helvetica", 16, "bold"),
+            bootstyle="default"
+        )
+        title_label.pack(side=tk.LEFT, padx=10)
+        
+        # Add version info in header
+        version_label = ttk.Label(
+            self.header_frame,
+            text="v1.0.0",
+            bootstyle="default" if HAS_TTKBOOTSTRAP else "default"
+        )
+        version_label.pack(side=tk.RIGHT, padx=10)
+
         # Create notebook for tabs
-        self.notebook = ttk.Notebook(self.main_frame)
-        self.notebook.grid(row=0, column=0, sticky="nsew")
+        if HAS_TTKBOOTSTRAP:
+            self.notebook = ttk.Notebook(self.main_frame, bootstyle="default")
+        else:
+            self.notebook = ttk.Notebook(self.main_frame)
+            
+        self.notebook.grid(row=1, column=0, sticky="nsew")
 
         # Create tabs
         self.credentials_tab = CredentialsTab(self.notebook, self.storage)
@@ -1698,19 +1826,45 @@ class UnifiedAdminGUI:
         # Configure notebook to expand
         self.notebook.grid_rowconfigure(0, weight=1)
         self.notebook.grid_columnconfigure(0, weight=1)
-
-        # Style configuration for notebook tabs
-        style = ttk.Style()
-        style.configure('TNotebook.Tab', padding=[20, 5])
-
+        
+        # Add footer with status information
+        self.footer_frame = ttk.Frame(self.main_frame)
+        self.footer_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(10, 0))
+        
+        self.status_label = ttk.Label(
+            self.footer_frame,
+            text="Ready",
+            bootstyle="default" if HAS_TTKBOOTSTRAP else "default"
+        )
+        self.status_label.pack(side=tk.LEFT, padx=10)
+        
         # Create required directories
         Path('logs').mkdir(exist_ok=True)
         Path('data').mkdir(exist_ok=True)
+    
+    def load_and_set_icon(self):
+        """Create and set a simple app icon"""
+        if not HAS_PIL:
+            return
+            
+        # Create a simple icon with the app initials "RZ"
+        icon_size = 64
+        icon = Image.new('RGB', (icon_size, icon_size), COLORS["primary"])
+        # You can customize this with an actual icon file if available
+        
+        # Save icon to a file and use it
+        icon_path = os.path.join("data", "app_icon.ico")
+        icon.save(icon_path)
+        self.root.iconbitmap(icon_path)
 
 def main():
     """Main function"""
     try:
-        root = tk.Tk()
+        if HAS_TTKBOOTSTRAP:
+            root = ttk.Window("RingCentral-Zoho Integration")
+        else:
+            root = tk.Tk()
+            
         app = UnifiedAdminGUI(root)
         root.mainloop()
     except Exception as e:

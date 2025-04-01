@@ -12,6 +12,7 @@ set "PYTHON_VERSION=3.8.10"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.8.10/python-3.8.10-amd64.exe"
 set "PYTHON_INSTALLER=%TEMP%\python-installer.exe"
 set "PYTHON_PATH=%LOCALAPPDATA%\Programs\Python\Python38"
+set "PYTHON_SCRIPTS=%LOCALAPPDATA%\Programs\Python\Python38\Scripts"
 
 :: Define the log function at the beginning but skip over it using GOTO
 goto :start_script
@@ -112,47 +113,51 @@ call :log "Checking for Python installation..."
 call :check_python
 if errorlevel 1 (
     call :log "Python 3.8 or higher is required but not found."
-    choice /c YN /m "Would you like to automatically install Python 3.8?"
-    if errorlevel 2 (
-        call :log "Python installation declined."
-        call :log "Please install Python 3.8 or later manually from https://www.python.org/downloads/"
+    call :log "Automatically installing Python 3.8..."
+    call :install_python
+    if errorlevel 1 (
+        call :log "Failed to install Python. Please install manually from https://www.python.org/downloads/"
         call :log "IMPORTANT: Check 'Add Python to PATH' during installation"
         pause
         exit /b 1
     )
+    
+    :: IMPORTANT: Force the PATH to include Python path explicitly
+    set "PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%PATH%"
+    call :log "Explicitly added Python to PATH: %PYTHON_PATH%"
+    
+    call :log "Verifying Python installation..."
+    call :check_python
     if errorlevel 1 (
-        call :log "Installing Python 3.8..."
-        call :install_python
-        if errorlevel 1 (
-            call :log "Failed to install Python. Please install manually from https://www.python.org/downloads/"
-            call :log "IMPORTANT: Check 'Add Python to PATH' during installation"
-            pause
-            exit /b 1
-        )
-        
-        call :log "Verifying Python installation..."
-        call :check_python
-        if errorlevel 1 (
-            call :log "Python was installed but could not be found in PATH."
-            call :log "You may need to restart your computer and run this script again."
-            pause
-            exit /b 1
-        )
-        
+        call :log "Python was installed but could not be found in PATH."
+        call :log "Attempting to use full path to Python..."
+        set "PYTHON_EXE=%PYTHON_PATH%\python.exe"
+        call :log "Using Python at: %PYTHON_EXE%"
+    ) else (
         call :log "Python installation successful!"
+        set "PYTHON_EXE=python"
     )
+) else (
+    call :log "Python is properly installed."
+    set "PYTHON_EXE=python"
 )
 
-call :log "Python is properly installed. Continuing setup..."
+call :log "Continuing setup with Python: %PYTHON_EXE%"
 
 :: Create virtual environment if it doesn't exist
 if not exist .venv (
     call :log "Creating virtual environment..."
-    python -m venv .venv >> "%log_file%" 2>&1
+    "%PYTHON_EXE%" -m venv .venv >> "%log_file%" 2>&1
     if errorlevel 1 (
         call :log "Failed to create virtual environment."
-        pause
-        exit /b 1
+        call :log "Attempting with explicit path to venv module..."
+        "%PYTHON_EXE%" -m venv --help >> "%log_file%" 2>&1
+        "%PYTHON_EXE%" -m venv .venv >> "%log_file%" 2>&1
+        if errorlevel 1 (
+            call :log "Failed to create virtual environment after retry."
+            pause
+            exit /b 1
+        )
     )
 )
 
@@ -161,20 +166,32 @@ call :log "Activating virtual environment..."
 call .venv\Scripts\activate.bat
 if errorlevel 1 (
     call :log "Failed to activate virtual environment."
-    pause
-    exit /b 1
+    call :log "Attempting to install requirements directly with system Python..."
+    set "USE_SYSTEM_PYTHON=1"
+) else (
+    set "USE_SYSTEM_PYTHON=0"
 )
 
 :: Install required packages
 call :log "Installing required packages..."
-python -m pip install --upgrade pip >> "%log_file%" 2>&1
-python -m pip install "setuptools>=40.0.0" >> "%log_file%" 2>&1
-python -m pip install "tkcalendar>=1.6.0" >> "%log_file%" 2>&1
+if "%USE_SYSTEM_PYTHON%"=="1" (
+    "%PYTHON_EXE%" -m pip install --upgrade pip >> "%log_file%" 2>&1
+    "%PYTHON_EXE%" -m pip install "setuptools>=40.0.0" >> "%log_file%" 2>&1
+    "%PYTHON_EXE%" -m pip install "tkcalendar>=1.6.0" >> "%log_file%" 2>&1
+) else (
+    python -m pip install --upgrade pip >> "%log_file%" 2>&1
+    python -m pip install "setuptools>=40.0.0" >> "%log_file%" 2>&1
+    python -m pip install "tkcalendar>=1.6.0" >> "%log_file%" 2>&1
+)
 
 :: Check if requirements.txt exists
 if exist requirements.txt (
     call :log "Found requirements.txt, installing dependencies..."
-    pip install -r requirements.txt >> "%log_file%" 2>&1
+    if "%USE_SYSTEM_PYTHON%"=="1" (
+        "%PYTHON_EXE%" -m pip install -r requirements.txt >> "%log_file%" 2>&1
+    ) else (
+        pip install -r requirements.txt >> "%log_file%" 2>&1
+    )
 ) else (
     call :log "Creating a basic requirements.txt file..."
     echo requests>=2.25.1 > requirements.txt
@@ -185,109 +202,76 @@ if exist requirements.txt (
     echo python-dateutil>=2.8.1 >> requirements.txt
     echo urllib3>=1.26.4 >> requirements.txt
     echo tkcalendar>=1.6.1 >> requirements.txt
-    pip install -r requirements.txt >> "%log_file%" 2>&1
-)
-
-:: Verify package installation using a batch script approach
-call :log "Verifying package installation..."
-
-::: Create an ultra-simple verification script with strict indentation control
->verify_packages.py echo import sys, pkg_resources
->>verify_packages.py echo print("Checking required packages...")
->>verify_packages.py echo try:
->>verify_packages.py echo     secure_versions = { "cryptography": "3.4.8", "urllib3": "1.26.5", "requests": "2.25.1", "certifi": "2021.10.8" }
->>verify_packages.py echo     vulnerable = []
->>verify_packages.py echo     for pkg, min_ver in secure_versions.items():
->>verify_packages.py echo         try:
->>verify_packages.py echo             ver = pkg_resources.get_distribution(pkg).version
->>verify_packages.py echo             if pkg_resources.parse_version(ver) ^< pkg_resources.parse_version(min_ver):
->>verify_packages.py echo                 vulnerable.append(pkg + ">=" + min_ver)
->>verify_packages.py echo                 print(f"{pkg}: {ver} (update to {min_ver} recommended)")
->>verify_packages.py echo             else:
->>verify_packages.py echo                 print(f"{pkg}: {ver} (OK)")
->>verify_packages.py echo         except Exception as e:
->>verify_packages.py echo             print(f"{pkg}: Not found or error ({e})")
->>verify_packages.py echo     if vulnerable:
->>verify_packages.py echo         print("SECURITY ALERT: Vulnerable packages found")
->>verify_packages.py echo         with open("upgrade_list.txt", "w") as f:
->>verify_packages.py echo             f.write(" ".join(vulnerable))
->>verify_packages.py echo except Exception as e:
->>verify_packages.py echo     print(f"Error during package verification: {e}")
->>verify_packages.py echo print("Package verification complete")
-
-:: Run verification script with fail-safe handling
-call :log "Verifying package installation..."
-python verify_packages.py >> "%log_file%" 2>&1
-call :log "Package verification completed, continuing setup regardless of outcome..." -Level "INFO"
-
-:: Check if vulnerable packages were found and update them
-if exist upgrade_list.txt (
-    call :log "Vulnerable packages detected. Upgrading to secure versions..." -Level "WARNING"
-    set /p UPGRADE_PKGS=<upgrade_list.txt
-    
-    :: Update packages if needed
-    if not "%UPGRADE_PKGS%"=="" (
-        call :log "Upgrading packages: %UPGRADE_PKGS%" -Level "WARNING"
-        pip install --upgrade %UPGRADE_PKGS% >> "%log_file%" 2>&1
-        if not errorlevel 1 (
-            call :log "Successfully upgraded packages to secure versions!" -Level "SUCCESS"
-            :: Update requirements.txt with secure versions
-            pip freeze > requirements.txt.new
-            move /y requirements.txt.new requirements.txt > nul
-        )
+    echo ttkbootstrap>=1.10.1 >> requirements.txt
+    echo pillow>=9.0.0 >> requirements.txt
+    if "%USE_SYSTEM_PYTHON%"=="1" (
+        "%PYTHON_EXE%" -m pip install -r requirements.txt >> "%log_file%" 2>&1
+    ) else (
+        pip install -r requirements.txt >> "%log_file%" 2>&1
     )
-    
-    del upgrade_list.txt
 )
 
-:: Check for security alerts in log
-findstr "SECURITY ALERT" "%log_file%" > nul
-if not errorlevel 1 (
-    call :log "Security issues were detected and addressed" -Level "WARNING"
-    call :log "For more information: https://github.com/inimical023/rc_zoho/security/dependabot" -Level "INFO"
-)
-
-:: Clean up
-del verify_packages.py 2>nul
-call :log "Package verification complete. Continuing with setup..."
-
-:: Create launch_admin.bat and other launcher scripts immediately after verification
-:: to ensure they exist even if later steps fail
+:: Create launcher scripts immediately to ensure they exist even if later steps fail
 call :log "Creating launcher scripts (early creation for resilience)..."
 
 :: Create launch_admin.bat - critical file for PowerShell detection
 call :log "Creating launch_admin.bat..."
 (
     echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python unified_admin.py %%*
+    if "%USE_SYSTEM_PYTHON%"=="1" (
+        echo set "PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%%PATH%%"
+        echo "%PYTHON_EXE%" unified_admin.py %%*
+    ) else (
+        echo call .venv\Scripts\activate.bat
+        echo python unified_admin.py %%*
+    )
 ) > launch_admin.bat
 
 :: Check if this critical file was created
 if not exist launch_admin.bat (
     call :log "ERROR: Failed initial creation of launch_admin.bat - trying alternative method" -Level "ERROR"
     >launch_admin.bat echo @echo off
-    >>launch_admin.bat echo call .venv\Scripts\activate.bat
-    >>launch_admin.bat echo python unified_admin.py %%*
+    if "%USE_SYSTEM_PYTHON%"=="1" (
+        >>launch_admin.bat echo set "PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%%PATH%%"
+        >>launch_admin.bat echo "%PYTHON_EXE%" unified_admin.py %%*
+    ) else (
+        >>launch_admin.bat echo call .venv\Scripts\activate.bat
+        >>launch_admin.bat echo python unified_admin.py %%*
+    )
 )
 
-:: Create other launcher scripts
+:: Create other launcher scripts with system Python fallback
 (
     echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python setup_credentials.py %%*
+    if "%USE_SYSTEM_PYTHON%"=="1" (
+        echo set "PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%%PATH%%"
+        echo "%PYTHON_EXE%" setup_credentials.py %%*
+    ) else (
+        echo call .venv\Scripts\activate.bat
+        echo python setup_credentials.py %%*
+    )
 ) > run_setup_credentials.bat
 
 (
     echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python accepted_calls.py %%*
+    if "%USE_SYSTEM_PYTHON%"=="1" (
+        echo set "PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%%PATH%%"
+        echo "%PYTHON_EXE%" accepted_calls.py %%*
+    ) else (
+        echo call .venv\Scripts\activate.bat
+        echo python accepted_calls.py %%*
+    )
 ) > run_accepted_calls.bat
 
 (
     echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python missed_calls.py %%*
+    if "%USE_SYSTEM_PYTHON%"=="1" (
+        echo set "PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%%PATH%%"
+        echo "%PYTHON_EXE%" missed_calls.py %%*
+    ) else (
+        echo call .venv\Scripts\activate.bat
+        echo python missed_calls.py %%*
+    )
 ) > run_missed_calls.bat
 
 :: Create data directory if it doesn't exist
@@ -317,7 +301,7 @@ set download_errors=0
 :: Check essential files and download them if missing
 for %%f in (common.py unified_admin.py secure_credentials.py setup_credentials.py) do (
     if not exist %%f (
-        call :log "Essential file %%f is missing! Trying to download again..." -Level "WARNING"
+        call :log "Essential file %%f is missing! Trying to download again..."
         call :download_file "%%f" "%GITHUB_REPO%/%%f"
         if not exist %%f (
             set /a missing_files+=1
@@ -327,18 +311,18 @@ for %%f in (common.py unified_admin.py secure_credentials.py setup_credentials.p
 
 :: Create a simple version of files if they're still missing
 if %missing_files% GTR 0 (
-    call :log "Some files could not be downloaded. Creating basic placeholder files..." -Level "WARNING"
+    call :log "Some files could not be downloaded. Creating basic placeholder files..."
     
     if not exist common.py (
         call :log "Creating basic common.py..."
-        echo """Common functionality for RingCentral-Zoho integration.""" > common.py
+        echo # Common functionality for RingCentral-Zoho integration > common.py
         echo def get_version(): >> common.py
         echo     return '1.0.0' >> common.py
     )
     
     if not exist unified_admin.py (
         call :log "Creating basic unified_admin.py..."
-        echo """Unified Admin interface for RingCentral-Zoho integration.""" > unified_admin.py
+        echo # Unified Admin interface for RingCentral-Zoho integration > unified_admin.py
         echo import tkinter as tk >> unified_admin.py
         echo from tkinter import ttk, messagebox >> unified_admin.py
         echo. >> unified_admin.py
@@ -356,7 +340,7 @@ if %missing_files% GTR 0 (
     
     if not exist secure_credentials.py (
         call :log "Creating basic secure_credentials.py..."
-        echo """Secure credential management for RingCentral-Zoho integration.""" > secure_credentials.py
+        echo # Secure credential management for RingCentral-Zoho integration > secure_credentials.py
         echo class SecureCredentials: >> secure_credentials.py
         echo     def __init__(self): >> secure_credentials.py
         echo         self.rc_creds = None >> secure_credentials.py
@@ -387,34 +371,37 @@ call :log ""
 call :log "Log file location: %log_file%"
 call :log ""
 
-::: Create a simple setup_credentials.py if it doesn't exist
+:: Create setup_credentials.py if it doesn't exist
 if not exist setup_credentials.py (
-    call :log "Creating basic setup_credentials.py as download failed..." -Level "WARNING"
-    echo import os > setup_credentials.py
-    echo import sys >> setup_credentials.py
-    echo import logging >> setup_credentials.py
-    echo from pathlib import Path >> setup_credentials.py
-    echo. >> setup_credentials.py
-    echo # Configure logging >> setup_credentials.py
-    echo logging.basicConfig( >> setup_credentials.py
-    echo     level=logging.INFO, >> setup_credentials.py
-    echo     format='%%(asctime)s - %%(levelname)s - %%(message)s', >> setup_credentials.py
-    echo     handlers=[ >> setup_credentials.py
-    echo         logging.FileHandler('logs/setup_credentials.log'), >> setup_credentials.py
-    echo         logging.StreamHandler() >> setup_credentials.py
-    echo     ] >> setup_credentials.py
-    echo ) >> setup_credentials.py
-    echo. >> setup_credentials.py
-    echo def main(): >> setup_credentials.py
-    echo     """Main function""" >> setup_credentials.py
-    echo     print("Setting up credentials...") >> setup_credentials.py
-    echo     print("Please check the documentation for details on how to obtain API credentials.") >> setup_credentials.py
-    echo     print("IMPORTANT: This is a placeholder file created during installation.") >> setup_credentials.py
-    echo     print("The full version should have been downloaded from GitHub.") >> setup_credentials.py
-    echo     print("Please re-run the installer or download the file manually.") >> setup_credentials.py
-    echo. >> setup_credentials.py
-    echo if __name__ == "__main__": >> setup_credentials.py
-    echo     main() >> setup_credentials.py
+    call :log "Creating basic setup_credentials.py as download failed..."
+    
+    (
+        echo import os
+        echo import sys
+        echo import logging
+        echo from pathlib import Path
+        echo.
+        echo # Configure logging
+        echo logging.basicConfig(
+        echo     level=logging.INFO,
+        echo     format='%%(asctime)s - %%(levelname)s - %%(message)s',
+        echo     handlers=[
+        echo         logging.FileHandler('logs/setup_credentials.log'^),
+        echo         logging.StreamHandler(^)
+        echo     ]
+        echo ^)
+        echo.
+        echo def main(^):
+        echo     """Main function"""
+        echo     print("Setting up credentials..."^)
+        echo     print("Please check the documentation for details on how to obtain API credentials."^)
+        echo     print("IMPORTANT: This is a placeholder file created during installation."^)
+        echo     print("The full version should have been downloaded from GitHub."^)
+        echo     print("Please re-run the installer or download the file manually."^)
+        echo.
+        echo if __name__ == "__main__":
+        echo     main(^)
+    ) > setup_credentials.py
 )
 
 :: End of script

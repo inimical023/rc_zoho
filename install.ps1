@@ -211,6 +211,24 @@ function Install-Python {
     return (Test-PythonInstallation)
 }
 
+# Create a pythonpath.txt file with the Python paths
+function Create-PythonPathFile {
+    param (
+        [string]$PythonPath
+    )
+    
+    try {
+        $pythonPathFile = Join-Path $installDir "pythonpath.txt"
+        Set-Content -Path $pythonPathFile -Value $PythonPath
+        Set-Content -Path "$pythonPathFile.scripts" -Value "$PythonPath\Scripts"
+        Write-Log "Created Python path file at $pythonPathFile" -Level "INFO"
+        return $true
+    } catch {
+        Write-Log "Failed to create Python path file: $_" -Level "ERROR"
+        return $false
+    }
+}
+
 # Main installation process
 Write-Log "RingCentral-Zoho Integration Setup" -Level "INFO"
 Write-Log "=================================" -Level "INFO"
@@ -218,30 +236,36 @@ Write-Log "=================================" -Level "INFO"
 # Check Python installation and install if needed
 if (-not (Test-PythonInstallation)) {
     Write-Log "Python $requiredPythonVersion or higher is required but not found." -Level "WARNING"
-    Write-Host "Would you like to automatically install Python $requiredPythonVersion? (Y/N)"
-    $response = Read-Host
-    if ($response -eq "Y") {
-        $pythonInstalled = Install-Python
-        if (-not $pythonInstalled) {
-            Write-Log "Automatic Python installation failed." -Level "ERROR"
-            Write-Log "Please install Python $requiredPythonVersion or higher manually:" -Level "WARNING"
-            Write-Log "1. Download from: https://www.python.org/downloads/" -Level "WARNING"
-            Write-Log "2. IMPORTANT: Check 'Add Python to PATH' during installation" -Level "WARNING"
-            Write-Log "3. Run this script again after installation" -Level "WARNING"
-            exit 1
-        }
-        # Verify Python is in PATH
-        Write-Log "Verifying Python is in PATH..." -Level "INFO"
-        if (-not (Test-PythonInstallation)) {
-            Write-Log "Python was installed but could not be found in PATH." -Level "ERROR"
-            Write-Log "You may need to restart your computer and run this script again." -Level "WARNING"
-            exit 1
-        }
-    } else {
-        Write-Log "Python installation was declined." -Level "WARNING"
-        Write-Log "Please install Python $requiredPythonVersion or higher and add it to PATH." -Level "WARNING"
-        Write-Log "Download Python from: https://www.python.org/downloads/" -Level "WARNING"
+    Write-Log "Automatically installing Python $requiredPythonVersion..." -Level "INFO"
+    
+    $pythonInstalled = Install-Python
+    if (-not $pythonInstalled) {
+        Write-Log "Automatic Python installation failed." -Level "ERROR"
+        Write-Log "Please install Python $requiredPythonVersion or higher manually:" -Level "WARNING"
+        Write-Log "1. Download from: https://www.python.org/downloads/" -Level "WARNING"
+        Write-Log "2. IMPORTANT: Check 'Add Python to PATH' during installation" -Level "WARNING"
+        Write-Log "3. Run this script again after installation" -Level "WARNING"
         exit 1
+    }
+    
+    # Create a file with the Python path for the batch script to use
+    Create-PythonPathFile -PythonPath $pythonInstallDir
+    
+    # Verify Python is in PATH
+    Write-Log "Verifying Python is in PATH..." -Level "INFO"
+    if (-not (Test-PythonInstallation)) {
+        Write-Log "Python was installed but could not be found in PATH." -Level "ERROR"
+        Write-Log "Will try to use full path to Python: $pythonInstallDir\python.exe" -Level "INFO"
+    }
+} else {
+    # Get the actual Python path to create the path file
+    try {
+        $pythonExePath = (Get-Command python).Source
+        $pythonDir = Split-Path -Parent $pythonExePath
+        Create-PythonPathFile -PythonPath $pythonDir
+    } catch {
+        Write-Log "Could not determine Python installation directory: $_" -Level "WARNING"
+        Create-PythonPathFile -PythonPath $pythonInstallDir  # Use default as fallback
     }
 }
 
@@ -338,10 +362,28 @@ try {
     # Add executable permissions to the batch file (just in case)
     Write-Log "Setting batch file permissions..."
     
-    # Run the batch file with cmd.exe directly, which is better for batch files
+    # Pass Python path environment variables to the batch file
+    $pythonPath = if (Test-Path "$installDir\pythonpath.txt") { Get-Content "$installDir\pythonpath.txt" } else { $pythonInstallDir }
+    $pythonScriptsPath = if (Test-Path "$installDir\pythonpath.txt.scripts") { Get-Content "$installDir\pythonpath.txt.scripts" } else { "$pythonInstallDir\Scripts" }
+    
+    # Create a temporary wrapper batch file that sets environment variables
+    $wrapperFile = Join-Path $installDir "run_setup.bat"
+    @"
+@echo off
+set "PYTHON_PATH=$pythonPath"
+set "PYTHON_SCRIPTS=$pythonScriptsPath"
+set "PATH=$pythonPath;$pythonScriptsPath;%PATH%"
+call $setupFile
+exit /b %ERRORLEVEL%
+"@ | Set-Content -Path $wrapperFile
+    
+    # Run the wrapper batch file with cmd.exe directly
     $cmdPath = "$env:SystemRoot\System32\cmd.exe"
-    Write-Log "Running setup_integration.bat using $cmdPath..."
-    $process = Start-Process -FilePath $cmdPath -ArgumentList "/c $setupFile" -WorkingDirectory $installDir -Wait -NoNewWindow -PassThru
+    Write-Log "Running setup_integration.bat using $cmdPath with PATH set to include Python..."
+    $process = Start-Process -FilePath $cmdPath -ArgumentList "/c $wrapperFile" -WorkingDirectory $installDir -Wait -NoNewWindow -PassThru
+    
+    # Clean up wrapper
+    Remove-Item $wrapperFile -Force -ErrorAction SilentlyContinue
     
     # Check process execution
     if ($process.ExitCode -ne 0) {
@@ -371,6 +413,26 @@ try {
         }
     } else {
         Write-Log "Batch script completed successfully with exit code 0" -Level "SUCCESS"
+    }
+    
+    # Install additional UI enhancement packages
+    Write-Log "Installing UI enhancement packages (ttkbootstrap and pillow)..."
+    
+    try {
+        if (Test-Path (Join-Path $installDir ".venv")) {
+            # Use virtual environment python if it exists
+            $pythonCmd = "& $(Join-Path $installDir '.venv\Scripts\python.exe')"
+            Write-Log "Using virtual environment Python for UI enhancements"
+            Invoke-Expression "$pythonCmd -m pip install ttkbootstrap pillow" | Out-Null
+        } else {
+            # Use system python
+            Write-Log "Using system Python for UI enhancements"
+            & $pythonPath\python.exe -m pip install ttkbootstrap pillow | Out-Null
+        }
+        Write-Log "Successfully installed UI enhancement packages" -Level "SUCCESS"
+    } catch {
+        Write-Log "Warning: Failed to install UI enhancement packages: $_" -Level "WARNING"
+        Write-Log "The application will still work but with a basic theme" -Level "WARNING"
     }
     
     # Verify key files were created
