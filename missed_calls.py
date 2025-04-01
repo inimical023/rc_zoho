@@ -1,6 +1,8 @@
 from common import *   # Now you have os, sys, json, logging, etc.
 import itertools  # For round-robin lead owner assignment
 import argparse
+import time
+import re  # Add import for regular expressions
 
 # Check and install dependencies
 check_and_install_dependencies()
@@ -43,6 +45,23 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+def normalize_phone_number(phone):
+    """
+    Normalize phone number to a standard format (digits only).
+    E.g., +1 (555) 123-4567 -> 15551234567
+    """
+    if not phone:
+        return phone
+    
+    # Remove all non-digit characters
+    digits_only = re.sub(r'\D', '', phone)
+    
+    # If it's a US/Canada number with 10 digits and no country code, add '1'
+    if len(digits_only) == 10:
+        digits_only = '1' + digits_only
+        
+    return digits_only
+
 class RingCentralClient:
     """Client for interacting with the RingCentral API."""
 
@@ -57,10 +76,11 @@ class RingCentralClient:
         self.account_id = credentials['rc_account']
         self.base_url = "https://platform.ringcentral.com"
         self.access_token = None
+        self.token_expiry = None  # Track token expiry time
         self._get_oauth_token()
 
     def _get_oauth_token(self):
-        """Exchange JWT token for OAuth access token."""
+        """Exchange JWT token for OAuth access token with retry logic."""
         url = f"{self.base_url}/restapi/oauth/token"
         # Create Basic auth header
         auth_str = f"{self.client_id}:{self.client_secret}"
@@ -76,20 +96,59 @@ class RingCentralClient:
             "assertion": self.jwt_token
         }
         
-        try:
-            response = requests.post(url, headers=headers, data=data)
-            response.raise_for_status()
-            token_data = response.json()
-            self.access_token = token_data["access_token"]
-            logger.debug(f"RingCentral authentication successful. Token expires in {token_data.get('expires_in', 'unknown')} seconds")
-        except Exception as e:
-            logger.error(f"Error getting RingCentral token: {str(e)}")
-            raise
+        # Add retry logic with exponential backoff
+        max_retries = 3
+        backoff_factor = 2
+        delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"Getting RingCentral access token (attempt {attempt+1}/{max_retries})")
+                response = requests.post(url, headers=headers, data=data)
+                response.raise_for_status()
+                token_data = response.json()
+                
+                if 'access_token' not in token_data:
+                    logger.error(f"Access token not found in response: {token_data}")
+                    time.sleep(delay)
+                    delay *= backoff_factor
+                    continue
+                    
+                self.access_token = token_data["access_token"]
+                
+                # Store token expiry time if available
+                if 'expires_in' in token_data:
+                    # Add some buffer (subtract 60 seconds) to ensure we refresh before expiry
+                    self.token_expiry = time.time() + token_data['expires_in'] - 60
+                
+                logger.debug(f"RingCentral authentication successful. Token expires in {token_data.get('expires_in', 'unknown')} seconds")
+                return True
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request exception getting RingCentral token (attempt {attempt+1}/{max_retries}): {e}")
+                time.sleep(delay)
+                delay *= backoff_factor
+                continue
+            except Exception as e:
+                logger.error(f"Error getting RingCentral token (attempt {attempt+1}/{max_retries}): {str(e)}")
+                time.sleep(delay)
+                delay *= backoff_factor
+                continue
+                
+        logger.error("Failed to get RingCentral access token after multiple attempts")
+        raise Exception("Failed to get RingCentral access token")
+
+    def _ensure_valid_token(self):
+        """Ensure we have a valid access token before making API calls."""
+        if not self.access_token:
+            self._get_oauth_token()
+        elif self.token_expiry and time.time() > self.token_expiry:
+            logger.debug("RingCentral token expired or about to expire, refreshing")
+            self._get_oauth_token()
 
     def get_call_logs(self, extension_id, start_date=None, end_date=None):
-        """Get missed call logs from RingCentral API for a specific extension."""
-        if not self.access_token:
-            raise Exception("No OAuth access token available")
+        """Get missed call logs from RingCentral API for a specific extension with retry logic."""
+        self._ensure_valid_token()  # Ensure token is valid before making API calls
 
         url = f"{self.base_url}/restapi/v1.0/account/{self.account_id}/extension/{extension_id}/call-log"
         params = {
@@ -117,20 +176,72 @@ class RingCentralClient:
         logger.debug(f"API Request Parameters: {params}")
         logger.debug(f"API Request Headers: {headers}")
 
-        response = requests.get(url, headers=headers, params=params)
-
-        logger.debug(f"API Response Status: {response.status_code}")
-        logger.debug(f"API Raw Response: {response.text[:500]}...")
-
-        if response.status_code == 200:
-            data = response.json()
-            records = data.get('records', [])
-            logger.info(f"Retrieved {len(records)} missed calls for extension {extension_id}")
-            return records
-        else:
-            logger.error(
-                f"Error getting call logs for extension {extension_id}: {response.status_code} - {response.text}")
-            return []
+        # Add retry logic with exponential backoff
+        max_retries = 3
+        backoff_factor = 2
+        delay = 1
+        
+        all_records = []
+        page = 1
+        
+        while True:
+            try:
+                # Include pagination if needed
+                params['page'] = page
+                
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.get(url, headers=headers, params=params)
+                        
+                        # Handle token expiration
+                        if response.status_code == 401:  # Unauthorized - token expired
+                            logger.warning("Access token expired, refreshing...")
+                            self._get_oauth_token()
+                            headers["Authorization"] = f"Bearer {self.access_token}"
+                            continue  # Retry with new token
+                            
+                        # Handle rate limiting
+                        if response.status_code == 429:  # Rate limit
+                            retry_after = int(response.headers.get('Retry-After', 10))
+                            logger.warning(f"Rate limit hit, retrying after {retry_after} seconds")
+                            time.sleep(retry_after)
+                            continue
+                            
+                        response.raise_for_status()
+                        break  # Exit retry loop if request was successful
+                        
+                    except requests.exceptions.RequestException as e:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Request error (attempt {attempt+1}/{max_retries}): {e}")
+                            time.sleep(delay)
+                            delay *= backoff_factor
+                            continue  # Try again
+                        else:
+                            logger.error(f"Failed to get call logs after {max_retries} attempts: {e}")
+                            return all_records if all_records else []
+                
+                data = response.json()
+                records = data.get('records', [])
+                
+                logger.debug(f"Retrieved {len(records)} records for page {page}")
+                logger.debug(f"API Response Status: {response.status_code}")
+                
+                if records:
+                    all_records.extend(records)
+                
+                # Check for more pages
+                navigation = data.get('navigation', {})
+                if page >= navigation.get('totalPages', 1):
+                    break  # No more pages
+                    
+                page += 1
+                
+            except Exception as e:
+                logger.error(f"Error getting call logs for extension {extension_id}: {str(e)}")
+                break  # Exit the loop on unhandled exceptions
+            
+        logger.info(f"Retrieved {len(all_records)} missed calls for extension {extension_id}")
+        return all_records
 
 
 class ZohoClient:
@@ -148,10 +259,11 @@ class ZohoClient:
         self.access_token = None
         self.base_url = "https://www.zohoapis.com/crm/v7"  # Default to v7
         self.dry_run = dry_run  # Add dry_run attribute
+        self.token_expiry = None  # Track token expiry time
         self._get_access_token()
 
     def _get_access_token(self):
-        """Get access token using refresh token."""
+        """Get access token using refresh token with retry logic."""
         url = "https://accounts.zoho.com/oauth/v2/token"
         data = {
             "refresh_token": self.refresh_token,
@@ -160,15 +272,55 @@ class ZohoClient:
             "grant_type": "refresh_token"
         }
         
-        try:
-            response = requests.post(url, data=data)
-            response.raise_for_status()
-            token_data = response.json()
-            self.access_token = token_data["access_token"]
-            logger.debug(f"Zoho authentication successful. Token expires in {token_data.get('expires_in', 'unknown')} seconds")
-        except Exception as e:
-            logger.error(f"Error getting Zoho token: {str(e)}")
-            raise
+        # Add retry logic with exponential backoff
+        max_retries = 3
+        backoff_factor = 2
+        delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"Getting Zoho access token (attempt {attempt+1}/{max_retries})")
+                response = requests.post(url, data=data)
+                response.raise_for_status()
+                token_data = response.json()
+                
+                if 'access_token' not in token_data:
+                    logger.error(f"Access token not found in response: {token_data}")
+                    time.sleep(delay)
+                    delay *= backoff_factor
+                    continue
+                    
+                self.access_token = token_data["access_token"]
+                
+                # Store token expiry time if available
+                if 'expires_in' in token_data:
+                    # Add some buffer (subtract 60 seconds) to ensure we refresh before expiry
+                    self.token_expiry = time.time() + token_data['expires_in'] - 60
+                
+                logger.debug(f"Zoho authentication successful. Token expires in {token_data.get('expires_in', 'unknown')} seconds")
+                return True
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request exception getting Zoho token (attempt {attempt+1}/{max_retries}): {e}")
+                time.sleep(delay)
+                delay *= backoff_factor
+                continue
+            except Exception as e:
+                logger.error(f"Error getting Zoho token (attempt {attempt+1}/{max_retries}): {str(e)}")
+                time.sleep(delay)
+                delay *= backoff_factor
+                continue
+                
+        logger.error("Failed to get Zoho access token after multiple attempts")
+        raise Exception("Failed to get Zoho access token")
+
+    def _ensure_valid_token(self):
+        """Ensure we have a valid access token before making API calls."""
+        if not self.access_token:
+            self._get_access_token()
+        elif self.token_expiry and time.time() > self.token_expiry:
+            logger.debug("Zoho token expired or about to expire, refreshing")
+            self._get_access_token()
 
     def create_or_update_lead(self, call, lead_owner, extension_names):
         """Create or update a lead in Zoho CRM."""
@@ -203,7 +355,11 @@ class ZohoClient:
             logger.debug(f"Using lead owner: {lead_owner}")
             logger.debug(f"Lead owner ID: {lead_owner_id}")
             
-            phone_number = call['from']['phoneNumber']
+            # Get and normalize the phone number
+            raw_phone_number = call['from']['phoneNumber']
+            phone_number = normalize_phone_number(raw_phone_number)
+            logger.debug(f"Normalized phone number: {raw_phone_number} -> {phone_number}")
+            
             extension_id = call['to'].get('extensionId')
             lead_source = extension_names.get(extension_id, "Unknown")
             lead_status = "Missed Call"  # Set Lead Status to "Missed Call"
@@ -228,7 +384,7 @@ class ZohoClient:
             call_details.append(f"Call time: {call_time}")
             call_details.append(f"Call direction: {call.get('direction', 'Unknown')}")
             call_details.append(f"Call duration: {call.get('duration', 'Unknown')} seconds")
-            call_details.append(f"Caller number: {phone_number}")
+            call_details.append(f"Caller number: {raw_phone_number}")
             call_details.append(f"Called extension: {extension_names.get(extension_id, extension_id)}")
             call_details.append(f"Call result: {call.get('result', 'Unknown')}")
             
@@ -242,19 +398,19 @@ class ZohoClient:
                 f"Call ID: {call.get('id', 'Unknown')}"
             ])
 
-            # Search for existing lead
+            # Use the enhanced phone search that tries multiple formats
             existing_lead = self.search_records("Leads", f"Phone:equals:{phone_number}")
 
             if existing_lead:
                 lead_id = existing_lead[0]['id']
-                logger.info(f"Existing lead found {lead_id} for {phone_number}. Adding a note.")
+                logger.info(f"Existing lead found {lead_id} for phone {phone_number}. Adding a note.")
                 
                 # Add note to existing lead with more detailed information
                 note_result = self.add_note_to_lead(lead_id, note_content)
                 if not note_result:
                     logger.error(f"Failed to add note to existing lead {lead_id}")
                     # Retry once with simplified note content
-                    simplified_note = f"Missed call received on {call_time} from {phone_number}."
+                    simplified_note = f"Missed call received on {call_time} from {raw_phone_number}."
                     retry_result = self.add_note_to_lead(lead_id, simplified_note)
                     if retry_result:
                         logger.info(f"Successfully added simplified note to lead {lead_id} after retry")
@@ -264,7 +420,7 @@ class ZohoClient:
                 data = {
                     "data": [
                         {
-                            "Phone": phone_number,
+                            "Phone": phone_number,  # Use normalized phone number
                             "Owner": {"id": lead_owner_id},
                             "Lead_Source": lead_source,
                             "Lead_Status": lead_status,
@@ -282,6 +438,16 @@ class ZohoClient:
                     logger.info(f"[DRY-RUN] Would have created lead with data: {data}")
                     return "dry_run_id"
                 else:
+                    # Final safety check right before creating
+                    # This helps prevent race conditions in multi-threaded environments
+                    final_check = self.search_records("Leads", f"Phone:equals:{phone_number}")
+                    if final_check:
+                        lead_id = final_check[0]['id']
+                        logger.info(f"Lead found in final verification {lead_id} for {phone_number}. Adding a note.")
+                        note_result = self.add_note_to_lead(lead_id, note_content)
+                        return lead_id
+                    
+                    # No duplicates found, create the new lead
                     lead_id = self.create_zoho_lead(data)
                     if lead_id:
                         # Add note for new lead creation with more detailed information
@@ -496,11 +662,16 @@ class ZohoClient:
             return None
 
     def search_records(self, module, criteria):
-        """Search for records in Zoho CRM."""
-        if not self.access_token:
-            logger.error("No access token available")
-            return None
+        """
+        Search for records in Zoho CRM with enhanced phone number search capability.
+        For phone number searches, will try multiple formats to increase matching likelihood.
+        """
+        self._ensure_valid_token()  # Use a new method to ensure token is valid
 
+        # Handle special case for phone number searches
+        if criteria.startswith("Phone:equals:"):
+            return self._search_by_phone(module, criteria.split(":")[-1])
+        
         url = f"{self.base_url}/{module}/search"
         headers = {
             "Authorization": f"Zoho-oauthtoken {self.access_token}",
@@ -510,24 +681,135 @@ class ZohoClient:
             "criteria": criteria
         }
 
+        # Add retry logic with exponential backoff
+        max_retries = 3
+        backoff_factor = 2
+        delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=headers, params=params)
+                
+                # Handle token expiration
+                if response.status_code == 401:  # Unauthorized - token expired
+                    logger.warning("Access token expired, refreshing...")
+                    self._get_access_token()
+                    headers["Authorization"] = f"Zoho-oauthtoken {self.access_token}"
+                    continue  # Retry with new token
+                
+                # Handle rate limiting
+                if response.status_code == 429:  # Rate limit
+                    retry_after = int(response.headers.get('Retry-After', 10))
+                    logger.warning(f"Rate limit hit, retrying after {retry_after} seconds")
+                    time.sleep(retry_after)
+                    continue
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and data['data']:
+                        return data['data']
+                    else:
+                        logger.warning(f"No records found matching criteria: {criteria}")
+                        return None
+                elif response.status_code == 204:
+                    # 204 means No Content - successful request but no matching records
+                    logger.info(f"No records found in Zoho matching criteria: {criteria}")
+                    return None
+                else:
+                    logger.error(f"Error searching records (attempt {attempt+1}/{max_retries}): {response.status_code} - {response.text}")
+                    # Only retry for 5xx server errors and certain 4xx errors
+                    if response.status_code >= 500 or response.status_code in [408, 429]:
+                        time.sleep(delay)
+                        delay *= backoff_factor
+                        continue
+                    return None  # Don't retry for other errors
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request exception searching records (attempt {attempt+1}/{max_retries}): {e}")
+                time.sleep(delay)
+                delay *= backoff_factor
+                continue
+            except Exception as e:
+                logger.error(f"Exception searching records: {e}")
+                return None
+                
+        logger.error(f"Failed to search records after {max_retries} attempts")
+        return None
+
+    def _search_by_phone(self, module, phone_number):
+        """
+        Enhanced phone number search that tries multiple formats to increase match likelihood.
+        """
+        # Keep track of all formats we've tried
+        tried_formats = set()
+        
+        # Start with the provided phone number
+        phone_formats = [phone_number]
+        tried_formats.add(phone_number)
+        
+        # Normalized version (digits only)
+        normalized = normalize_phone_number(phone_number)
+        if normalized not in tried_formats:
+            phone_formats.append(normalized)
+            tried_formats.add(normalized)
+        
+        # If it's a US number with country code, try without country code
+        if normalized.startswith('1') and len(normalized) == 11:
+            without_country = normalized[1:]
+            if without_country not in tried_formats:
+                phone_formats.append(without_country)
+                tried_formats.add(without_country)
+        
+        # If it's a US number without country code, try with country code
+        if len(normalized) == 10:
+            with_country = '1' + normalized
+            if with_country not in tried_formats:
+                phone_formats.append(with_country)
+                tried_formats.add(with_country)
+        
+        # Try each phone format until we find a match
+        for phone_format in phone_formats:
+            logger.debug(f"Searching for lead with phone format: {phone_format}")
+            criteria = f"Phone:equals:{phone_format}"
+            result = self._execute_search(module, criteria)
+            if result:
+                return result
+        
+        # No matches found with any format
+        return None
+
+    def _execute_search(self, module, criteria):
+        """Execute a single search with the given criteria."""
+        url = f"{self.base_url}/{module}/search"
+        headers = {
+            "Authorization": f"Zoho-oauthtoken {self.access_token}",
+            "Content-Type": "application/json"
+        }
+        params = {
+            "criteria": criteria
+        }
+        
         try:
             response = requests.get(url, headers=headers, params=params)
+            
+            # Handle token expiration
+            if response.status_code == 401:  # Unauthorized - token expired
+                logger.warning("Access token expired, refreshing...")
+                self._get_access_token()
+                headers["Authorization"] = f"Zoho-oauthtoken {self.access_token}"
+                response = requests.get(url, headers=headers, params=params)
+            
             if response.status_code == 200:
                 data = response.json()
                 if data and data['data']:
                     return data['data']
-                else:
-                    logger.warning(f"No records found matching criteria: {criteria}")
-                    return None
-            elif response.status_code == 204:
-                # 204 means No Content - successful request but no matching records
-                logger.info(f"No records found in Zoho matching criteria: {criteria}")
-                return None
-            else:
-                logger.error(f"Error searching records: {response.status_code} - {response.text}")
-                return None
+            elif response.status_code != 204:  # Log errors, but not 204 (no content)
+                logger.warning(f"Search error: {response.status_code} - {response.text[:200]}")
+            
+            return None
+        
         except Exception as e:
-            logger.error(f"Exception searching records: {e}")
+            logger.warning(f"Search execution error: {e}")
             return None
 
 
@@ -640,7 +922,9 @@ def process_missed_calls(call_logs, zoho_client, extension_ids, extension_names,
         'existing_leads': 0,
         'new_leads': 0,
         'skipped_calls': 0,
-        'accepted_calls': 0
+        'accepted_calls': 0,
+        'failed_calls': 0,
+        'duplicate_prevented': 0
     }
 
     # Debugging: Log the lead owners structure to identify any issues
@@ -666,7 +950,23 @@ def process_missed_calls(call_logs, zoho_client, extension_ids, extension_names,
         owner_cycle = itertools.cycle([lead_owners[0]])
         logger.warning(f"Using fallback with single lead owner: {lead_owners[0]}")
 
-    for call in call_logs:
+    # Use a dictionary to track recently processed phone numbers
+    # to prevent concurrent processing of the same number
+    processed_phones = {}
+    # Define the cooldown period (in seconds) to wait before processing
+    # another call from the same number
+    phone_cooldown = 5
+
+    # Sort calls by startTime to process them in chronological order
+    # This helps with handling multiple calls from the same number correctly
+    sorted_calls = sorted(
+        call_logs, 
+        key=lambda x: x.get('startTime', ''), 
+        reverse=False  # Oldest first
+    )
+    
+    # Process calls
+    for call in sorted_calls:
         try:
             # Skip invalid calls
             if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
@@ -695,15 +995,37 @@ def process_missed_calls(call_logs, zoho_client, extension_ids, extension_names,
                     stats['skipped_calls'] += 1
                 continue
 
-            # Get the caller's phone number
-            phone_number = call['from']['phoneNumber']
+            # Get and normalize the caller's phone number
+            raw_phone = call['from']['phoneNumber']
+            phone_number = normalize_phone_number(raw_phone)
+            
+            # Check if this phone number was recently processed
+            # This helps prevent creating duplicates due to concurrent processing
+            current_time = time.time()
+            if phone_number in processed_phones:
+                last_processed, _ = processed_phones[phone_number]
+                if current_time - last_processed < phone_cooldown:
+                    logger.info(f"Phone {phone_number} was recently processed, waiting {phone_cooldown} seconds to avoid duplicates")
+                    stats['duplicate_prevented'] += 1
+                    time.sleep(phone_cooldown - (current_time - last_processed))
+            
+            # Mark this phone as being processed now
+            processed_phones[phone_number] = (time.time(), call.get('id'))
 
             # Check if this is an existing lead
             existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{phone_number}")
             if existing_lead:
                 stats['existing_leads'] += 1
             else:
-                stats['new_leads'] += 1
+                # One more check with the raw phone number before deciding it's a new lead
+                if phone_number != raw_phone:
+                    existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{raw_phone}")
+                    if existing_lead:
+                        stats['existing_leads'] += 1
+                    else:
+                        stats['new_leads'] += 1
+                else:
+                    stats['new_leads'] += 1
 
             # Get the next lead owner in the cycle - with explicit exception handling
             try:
@@ -716,12 +1038,16 @@ def process_missed_calls(call_logs, zoho_client, extension_ids, extension_names,
                 logger.warning(f"Using fallback lead owner: {lead_owner}")
 
             # Create or update the lead
-            zoho_client.create_or_update_lead(call, lead_owner, extension_names)
-            stats['processed_calls'] += 1
+            result = zoho_client.create_or_update_lead(call, lead_owner, extension_names)
+            if result:
+                stats['processed_calls'] += 1
+            else:
+                stats['failed_calls'] += 1
+                logger.error(f"Failed to process call {call.get('id')} for phone {phone_number}")
             
         except Exception as e:
             logger.error(f"Error processing call {call.get('id', 'unknown')}: {e}")
-            stats['skipped_calls'] += 1
+            stats['failed_calls'] += 1
             continue
 
     # Log and return statistics
@@ -732,6 +1058,8 @@ def process_missed_calls(call_logs, zoho_client, extension_ids, extension_names,
     logger.info(f"  Other calls skipped: {stats['skipped_calls']}")
     logger.info(f"  Existing leads updated: {stats['existing_leads']}")
     logger.info(f"  New leads created: {stats['new_leads'] if not dry_run else '0 (dry run)'}")
+    logger.info(f"  Duplicate processing prevented: {stats['duplicate_prevented']}")
+    logger.info(f"  Failed calls: {stats['failed_calls']}")
     
     return stats
 

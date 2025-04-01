@@ -5,9 +5,27 @@ import time  # Add explicit import for time module
 import subprocess
 import sys
 import pkg_resources
+import re  # Add regular expression support for phone normalization
 from datetime import datetime, timedelta
 import base64
 import requests
+
+def normalize_phone_number(phone):
+    """
+    Normalize phone number to a standard format (digits only).
+    E.g., +1 (555) 123-4567 -> 15551234567
+    """
+    if not phone:
+        return phone
+    
+    # Remove all non-digit characters
+    digits_only = re.sub(r'\D', '', phone)
+    
+    # If it's a US/Canada number with 10 digits and no country code, add '1'
+    if len(digits_only) == 10:
+        digits_only = '1' + digits_only
+        
+    return digits_only
 
 def check_and_install_dependencies():
     """Check and install required dependencies."""
@@ -376,48 +394,75 @@ class ZohoClient:
             # Check if the recording is already attached
             if self.is_recording_already_attached(lead_id, recording_id):
                 logger.info(f"Recording {recording_id} is already attached to lead {lead_id}. Skipping.")
-                return
+                return True
     
             logger.info(f"Attempting to attach recording {recording_id} to lead {lead_id}")
     
-            recording_content, content_type = rc_client.get_recording_content(recording_id)
-    
-            if recording_content:
-                # Format the call time for the filename
-                formatted_call_time = call_time.strftime("%Y%m%d_%H%M%S")
-    
-                # Zoho API endpoint for attaching files
-                url = f"{self.base_url}/Leads/{lead_id}/Attachments"
-                headers = {
-                    "Authorization": f"Zoho-oauthtoken {self.access_token}",
-                }
-                
-                # Determine file extension based on content type
-                if content_type == "audio/mpeg":
-                    extension = "mp3"
-                elif content_type == "audio/wav":
-                    extension = "wav"
-                else:
-                    extension = content_type.split('/')[1] if '/' in content_type else "bin"
-                
-                # Create the filename with the formatted call time
-                filename = f"{formatted_call_time}_recording_{recording_id}.{extension}"
-                files = {
-                    # Set filename and content type
-                    'file': (filename, recording_content, content_type)
-                }
-    
+            # Add retry logic with exponential backoff
+            max_retries = 3
+            backoff_factor = 2
+            delay = 1
+            
+            for attempt in range(max_retries):
                 try:
+                    recording_content, content_type = rc_client.get_recording_content(recording_id)
+        
+                    if not recording_content:
+                        logger.warning(f"Could not retrieve recording content for recording ID: {recording_id} (attempt {attempt+1}/{max_retries})")
+                        if attempt < max_retries - 1:
+                            time.sleep(delay)
+                            delay *= backoff_factor
+                            continue
+                        else:
+                            # Add a note about the unavailable recording content
+                            self.add_note_to_lead(lead_id, f"Recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')} could not be retrieved after {max_retries} attempts.")
+                            return False
+            
+                    # Format the call time for the filename
+                    formatted_call_time = call_time.strftime("%Y%m%d_%H%M%S")
+        
+                    # Zoho API endpoint for attaching files
+                    url = f"{self.base_url}/Leads/{lead_id}/Attachments"
+                    headers = {
+                        "Authorization": f"Zoho-oauthtoken {self.access_token}",
+                    }
+                    
+                    # Determine file extension based on content type
+                    if content_type == "audio/mpeg":
+                        extension = "mp3"
+                    elif content_type == "audio/wav":
+                        extension = "wav"
+                    else:
+                        extension = content_type.split('/')[1] if '/' in content_type else "bin"
+                    
+                    # Create the filename with the formatted call time
+                    filename = f"{formatted_call_time}_recording_{recording_id}.{extension}"
+                    files = {
+                        # Set filename and content type
+                        'file': (filename, recording_content, content_type)
+                    }
+        
+                    # Send the request with retry logic for various status codes
                     response = requests.post(url, headers=headers, files=files)
                     
                     if response.status_code == 401:  # Token expired
                         self._get_access_token()
                         headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
                         response = requests.post(url, headers=headers, files=files)
-    
+        
                     if response.status_code in [200, 201, 202]:
                         logger.info(f"Successfully attached recording {recording_id} to lead {lead_id}")
                         return True
+                    elif response.status_code == 429:  # Rate limit
+                        logger.warning(f"Rate limit hit. Sleeping for {delay} seconds before retry.")
+                        time.sleep(delay)
+                        delay *= backoff_factor
+                        continue  
+                    elif response.status_code >= 500:  # Server error
+                        logger.error(f"Server error attaching recording. Status: {response.status_code}. Retrying...")
+                        time.sleep(delay)
+                        delay *= backoff_factor
+                        continue
                     else:
                         logger.error(
                             f"Error attaching recording {recording_id} to lead {lead_id}. Status code: {response.status_code}, Response: {response.text}")
@@ -425,16 +470,26 @@ class ZohoClient:
                         self.add_note_to_lead(lead_id, f"Failed to attach recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')}. Error: {response.status_code}")
                         return False
     
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Request exception attaching recording {recording_id} to lead {lead_id}: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)
+                        delay *= backoff_factor
+                        continue
+                    else:
+                        # Add a note about the failed recording attachment
+                        self.add_note_to_lead(lead_id, f"Failed to attach recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')}. Error: {str(e)}")
+                        return False
                 except Exception as e:
                     logger.error(f"Exception attaching recording {recording_id} to lead {lead_id}: {e}")
                     # Add a note about the failed recording attachment
                     self.add_note_to_lead(lead_id, f"Failed to attach recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')}. Error: {str(e)}")
                     return False
-            else:
-                logger.warning(f"Could not retrieve recording content for recording ID: {recording_id}")
-                # Add a note about the unavailable recording content
-                self.add_note_to_lead(lead_id, f"Recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')} could not be retrieved.")
-                return False
+            
+            # If we reach here, all retries failed
+            logger.error(f"Failed to attach recording {recording_id} after {max_retries} attempts")
+            self.add_note_to_lead(lead_id, f"Failed to attach recording {recording_id} after {max_retries} attempts")
+            return False
         else:
             logger.info("No recording ID found for this call.")
             # Add a note that no recording was available for this call
@@ -493,9 +548,17 @@ class ZohoClient:
             return None
 
     def search_records(self, module, criteria):
-        """Search for records in Zoho CRM."""
-        self._ensure_valid_token()
+        """
+        Search for records in Zoho CRM with enhanced phone number search capability.
+        For phone number searches, will try multiple formats to increase matching likelihood.
+        """
+        self._ensure_valid_token()  # Use a new method to ensure token is valid
 
+        # Handle special case for phone number searches
+        if criteria.startswith("Phone:equals:") and not isinstance(criteria, dict):
+            phone = criteria.split(":")[-1]
+            return self._search_by_phone(module, phone)
+        
         url = f"{self.base_url}/{module}/search"
         headers = {
             "Authorization": f"Zoho-oauthtoken {self.access_token}",
@@ -505,31 +568,122 @@ class ZohoClient:
             "criteria": criteria
         }
 
-        try:
-            response = requests.get(url, headers=headers, params=params)
-            
-            if response.status_code == 401:  # Token expired
-                self._get_access_token()
-                headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+        # Add retry logic with exponential backoff
+        max_retries = 3
+        backoff_factor = 2
+        delay = 1
+        
+        for attempt in range(max_retries):
+            try:
                 response = requests.get(url, headers=headers, params=params)
                 
-            if response.status_code == 200:
-                data = response.json()
-                if data and 'data' in data and data['data']:
-                    return data['data']
-                else:
-                    logger.info(f"No records found matching criteria: {criteria}")
+                if response.status_code == 401:  # Token expired
+                    self._get_access_token()
+                    headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                    response = requests.get(url, headers=headers, params=params)
+                    
+                if response.status_code == 429:  # Rate limit
+                    logger.warning(f"Rate limit hit, retrying after {delay} seconds")
+                    time.sleep(delay)
+                    delay *= backoff_factor
+                    continue
+                    
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and 'data' in data and data['data']:
+                        return data['data']
+                    else:
+                        logger.info(f"No records found matching criteria: {criteria}")
+                        return None
+                elif response.status_code == 204:
+                    # 204 means No Content - successful request but no matching records
+                    logger.info(f"No records found in Zoho matching criteria: {criteria}")
                     return None
-            elif response.status_code == 204:
-                # 204 means No Content - successful request but no matching records
-                logger.info(f"No records found in Zoho matching criteria: {criteria}")
+                else:
+                    logger.error(f"Error searching records: {response.status_code} - {response.text}")
+                    
+                    # If we got a server error, retry with backoff
+                    if response.status_code >= 500:
+                        time.sleep(delay)
+                        delay *= backoff_factor
+                        continue
+                    
+                    return None
+                    
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request exception searching records (attempt {attempt+1}/{max_retries}): {e}")
+                time.sleep(delay)
+                delay *= backoff_factor
+                continue
+            except Exception as e:
+                logger.error(f"Exception searching records: {e}")
                 return None
-            else:
-                logger.error(f"Error searching records: {response.status_code} - {response.text}")
-                return None
-        except Exception as e:
-            logger.error(f"Exception searching records: {e}")
-            return None
+                
+        logger.error(f"Failed to search records after {max_retries} attempts")
+        return None
+
+    def _search_by_phone(self, module, phone_number):
+        """
+        Enhanced phone number search that tries multiple formats to increase match likelihood.
+        """
+        # Keep track of all formats we've tried
+        tried_formats = set()
+        
+        # Start with the provided phone number
+        phone_formats = [phone_number]
+        tried_formats.add(phone_number)
+        
+        # Normalized version (digits only)
+        normalized = normalize_phone_number(phone_number)
+        if normalized not in tried_formats:
+            phone_formats.append(normalized)
+            tried_formats.add(normalized)
+        
+        # If it's a US number with country code, try without country code
+        if normalized.startswith('1') and len(normalized) == 11:
+            without_country = normalized[1:]
+            if without_country not in tried_formats:
+                phone_formats.append(without_country)
+                tried_formats.add(without_country)
+        
+        # If it's a US number without country code, try with country code
+        if len(normalized) == 10:
+            with_country = '1' + normalized
+            if with_country not in tried_formats:
+                phone_formats.append(with_country)
+                tried_formats.add(with_country)
+                
+        # Try all phone number formats with direct API calls
+        for phone_format in phone_formats:
+            url = f"{self.base_url}/{module}/search"
+            headers = {
+                "Authorization": f"Zoho-oauthtoken {self.access_token}",
+                "Content-Type": "application/json"
+            }
+            params = {
+                "criteria": f"Phone:equals:{phone_format}"
+            }
+            
+            try:
+                response = requests.get(url, headers=headers, params=params)
+                
+                if response.status_code == 401:  # Token expired
+                    self._get_access_token()
+                    headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                    response = requests.get(url, headers=headers, params=params)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and 'data' in data and data['data']:
+                        logger.info(f"Found match using phone format: {phone_format}")
+                        return data['data']
+                elif response.status_code != 204:  # Ignore 204 (no content)
+                    logger.warning(f"Error searching with format {phone_format}: {response.status_code}")
+            except Exception as e:
+                logger.warning(f"Exception searching with format {phone_format}: {e}")
+                # Continue trying other formats
+                
+        return None
 
     def update_lead_status(self, lead_id, status):
         """Update a lead's status in Zoho CRM."""
@@ -627,12 +781,29 @@ class ZohoClient:
         """Create or update a lead in Zoho CRM based on call information."""
         self._ensure_valid_token()
         
+        # Validate lead_owner structure
+        if not lead_owner:
+            logger.error("Lead owner is None")
+            return None
+            
+        if not isinstance(lead_owner, dict):
+            logger.error(f"Lead owner is not a dictionary: {lead_owner}")
+            return None
+            
+        if 'id' not in lead_owner:
+            logger.error(f"Lead owner is missing 'id' key: {lead_owner}")
+            return None
+            
         # Check if call has the required structure
         if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
             logger.warning(f"Call {call.get('id')} is missing phone number data, skipping")
             return None
+        
+        # Get and normalize the caller's phone number
+        raw_phone_number = call['from']['phoneNumber']
+        phone_number = normalize_phone_number(raw_phone_number)
+        logger.debug(f"Normalized phone number: {raw_phone_number} -> {phone_number}")
             
-        phone_number = call['from']['phoneNumber']
         extension_id = call['to'].get('extensionId')
         lead_source = extension_names.get(str(extension_id), "Unknown")
         lead_status = "Accepted Call No Lead Created"  # Set Lead Status to "Accepted Call No Lead Created"
@@ -654,7 +825,7 @@ class ZohoClient:
         call_details.append(f"Call time: {formatted_time}")
         call_details.append(f"Call direction: {call.get('direction', 'Unknown')}")
         call_details.append(f"Call duration: {call.get('duration', 'Unknown')} seconds")
-        call_details.append(f"Caller number: {phone_number}")
+        call_details.append(f"Caller number: {raw_phone_number}")
         call_details.append(f"Called extension: {extension_names.get(str(extension_id), extension_id)}")
         call_details.append(f"Call result: {call.get('result', 'Unknown')}")
         call_details.append(f"Call ID: {call.get('id', 'Unknown')}")
@@ -668,7 +839,7 @@ class ZohoClient:
             f"Lead owner: {lead_owner.get('name', 'Unknown') if lead_owner else 'Unknown'}"
         ])
 
-        # Search for an existing lead by phone number
+        # Search for an existing lead by phone number - will try multiple formats
         existing_lead = self.search_records("Leads", f"Phone:equals:{phone_number}")
 
         if existing_lead:
@@ -710,22 +881,43 @@ class ZohoClient:
             if lead_owner and lead_owner.get('id'):
                 lead_data['data'][0]['Owner'] = {"id": lead_owner.get('id')}
                 
-            # Create the lead
-            lead_id = self.create_zoho_lead(lead_data)
-            
-            if lead_id:
-                # Add detailed creation note
-                creation_note = f"New lead created from accepted call on {formatted_time}.\n\n{note_content}"
-                self.add_note_to_lead(lead_id, creation_note)
-                
-                # Attach recording if one exists
-                if not self.dry_run:
-                    self.attach_recording_to_lead(call, lead_id, rc_client, call_time)
-                    
-                return lead_id
+            # Final duplicate check before creation
+            if self.dry_run:
+                logger.info(f"[DRY-RUN] Would have created lead with data: {lead_data}")
+                return "dry_run_lead_id"
             else:
-                logger.error(f"Failed to create lead for call {call.get('id')}")
-                return None
+                # Final safety check right before creating
+                # This helps prevent race conditions in multi-threaded environments
+                final_check = self.search_records("Leads", f"Phone:equals:{phone_number}")
+                if final_check:
+                    lead_id = final_check[0]['id']
+                    logger.info(f"Lead found in final verification {lead_id} for {phone_number}. Adding a note.")
+                    self.add_note_to_lead(lead_id, note_content)
+                    self.attach_recording_to_lead(call, lead_id, rc_client, call_time)
+                    return lead_id
+            
+                # Create the lead
+                lead_id = self.create_zoho_lead(lead_data)
+                
+                if lead_id:
+                    # Add detailed creation note
+                    creation_note = f"New lead created from accepted call on {formatted_time}.\n\n{note_content}"
+                    note_result = self.add_note_to_lead(lead_id, creation_note)
+                    if not note_result:
+                        logger.error(f"Failed to add creation note to new lead {lead_id}")
+                        # Retry with simplified note
+                        simplified_note = f"New lead created from accepted call on {formatted_time}."
+                        retry_result = self.add_note_to_lead(lead_id, simplified_note)
+                        if retry_result:
+                            logger.info(f"Successfully added simplified note to lead {lead_id} after retry")
+                    
+                    # Attach recording if one exists
+                    self.attach_recording_to_lead(call, lead_id, rc_client, call_time)
+                        
+                    return lead_id
+                else:
+                    logger.error(f"Failed to create lead for call {call.get('id')}")
+                    return None
 
 def get_date_range(hours_back=None, start_date=None, end_date=None):
     """Get date range based on input parameters."""
@@ -790,69 +982,141 @@ def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_name
         'new_leads': 0,
         'skipped_calls': 0,
         'recordings_attached': 0,
-        'recording_failures': 0
+        'recording_failures': 0,
+        'duplicate_prevented': 0,
+        'api_errors': 0
     }
 
-    # Create a round-robin iterator for lead owners
-    lead_owner_cycle = itertools.cycle(lead_owners)
-    
-    for call in call_logs:
-        # Skip invalid calls
-        if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
-            logger.warning(f"Call has invalid structure, skipping: {call.get('id')}")
-            stats['skipped_calls'] += 1
-            continue
-            
-        # Qualify the call
-        is_qualified, decision_data = qualify_call(call, extension_names, lead_owners)
+    # Validate lead_owners structure
+    if not isinstance(lead_owners, list) or len(lead_owners) == 0:
+        logger.error("Invalid lead_owners structure, must be a non-empty list")
+        return stats
         
-        if is_qualified:
-            stats['qualified_calls'] += 1
-            
-            # Extract lead owner information
-            if 'lead_owner' in decision_data.get('details', {}):
-                lead_owner_name = decision_data['details']['lead_owner']['name']
-                lead_owner_id = decision_data['details']['lead_owner']['id']
-                lead_owner = decision_data['details']['lead_owner']
-            elif 'extension_name' in decision_data.get('details', {}):
-                lead_owner_name = decision_data['details']['extension_name']
-                lead_owner_id = None  # No lead owner ID in this case
-                lead_owner = next(lead_owner_cycle)  # Use next owner in round-robin cycle
-            else:
-                logger.warning(f"No lead owner information found for call {call.get('id')}")
-                lead_owner = next(lead_owner_cycle)  # Use next owner in round-robin cycle
-                lead_owner_name = lead_owner.get('name', 'Unknown')
+    # Verify each lead owner has required fields
+    for i, owner in enumerate(lead_owners):
+        if not isinstance(owner, dict) or 'id' not in owner:
+            logger.error(f"Lead owner at index {i} missing 'id' field: {owner}")
+            return stats
 
-            # Check if call has recording
-            has_recording = bool('recording' in call and call['recording'] and 'id' in call['recording'])
-            
-            # Create or update lead in Zoho
-            phone_number = call['from']['phoneNumber']
-            existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{phone_number}")
-            
-            if existing_lead:
-                stats['existing_leads'] += 1
-            else:
-                stats['new_leads'] += 1
-                
-            lead_id = zoho_client.create_or_update_lead(call, lead_owner, extension_names, rc_client)
-            
-            if lead_id:
-                stats['processed_calls'] += 1
-                logger.info(f"Processed call {call.get('id')} - Lead Owner: {lead_owner_name}, Lead ID: {lead_id}")
-                
-                # Track recording statistics
-                if has_recording:
-                    if not dry_run and call.get('recording', {}).get('id'):
-                        # Statistics will be updated inside the create_or_update_lead method
-                        stats['recordings_attached'] += 1
-            else:
-                logger.warning(f"Failed to process call {call.get('id')}")
+    # Create a round-robin iterator for lead owners with error handling
+    try:
+        lead_owner_cycle = itertools.cycle(lead_owners)
+    except Exception as e:
+        logger.error(f"Failed to create lead owner cycle: {e}")
+        # Fallback to a single lead owner
+        lead_owner_cycle = itertools.cycle([lead_owners[0]])
+    
+    # Use a dictionary to track recently processed phone numbers
+    # to prevent concurrent processing of the same number
+    processed_phones = {}
+    # Define cooldown period (in seconds) to wait before processing
+    # another call from the same number
+    phone_cooldown = 10  # Longer for accepted calls since they include recording processing
+    
+    # Sort calls by startTime to process them in chronological order
+    sorted_calls = sorted(
+        call_logs, 
+        key=lambda x: x.get('startTime', ''), 
+        reverse=False  # Oldest first
+    )
+    
+    for call in sorted_calls:
+        try:
+            # Skip invalid calls
+            if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
+                logger.warning(f"Call has invalid structure, skipping: {call.get('id')}")
                 stats['skipped_calls'] += 1
-        else:
-            reason = decision_data.get('reason', 'Unknown reason')
-            logger.info(f"Skipped call {call.get('id')} - Not qualified: {reason}")
-            stats['skipped_calls'] += 1
+                continue
+            
+            # Get and normalize the caller's phone number
+            raw_phone = call['from']['phoneNumber']
+            phone_number = normalize_phone_number(raw_phone)
+            
+            # Check if this phone number was recently processed
+            # This helps prevent creating duplicates due to concurrent processing
+            current_time = time.time()
+            if phone_number in processed_phones:
+                last_processed, _ = processed_phones[phone_number]
+                if current_time - last_processed < phone_cooldown:
+                    logger.info(f"Phone {phone_number} was recently processed, waiting {phone_cooldown} seconds to avoid duplicates")
+                    stats['duplicate_prevented'] += 1
+                    time.sleep(phone_cooldown - (current_time - last_processed))
+            
+            # Mark this phone as being processed now
+            processed_phones[phone_number] = (time.time(), call.get('id'))
+            
+            # Qualify the call
+            is_qualified, decision_data = qualify_call(call, extension_names, lead_owners)
+            
+            if is_qualified:
+                stats['qualified_calls'] += 1
+                
+                # Extract lead owner information
+                if 'lead_owner' in decision_data.get('details', {}):
+                    lead_owner = decision_data['details']['lead_owner']
+                elif 'extension_name' in decision_data.get('details', {}):
+                    lead_owner_name = decision_data['details']['extension_name']
+                    lead_owner = next(lead_owner_cycle)  # Use next owner in round-robin cycle
+                else:
+                    logger.warning(f"No lead owner information found for call {call.get('id')}")
+                    try:
+                        lead_owner = next(lead_owner_cycle)  # Use next owner in round-robin cycle
+                    except Exception as e:
+                        logger.error(f"Error getting next lead owner: {e}")
+                        lead_owner = lead_owners[0]  # Fallback to first owner if cycle fails
+                
+                # Track if call has recording
+                has_recording = bool('recording' in call and call['recording'] and 'id' in call['recording'])
+                
+                # Check for existing lead using normalized phone number
+                existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{phone_number}")
+                
+                if existing_lead:
+                    stats['existing_leads'] += 1
+                else:
+                    # One more check with raw phone if it differs from normalized
+                    if phone_number != raw_phone:
+                        existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{raw_phone}")
+                        if existing_lead:
+                            stats['existing_leads'] += 1
+                        else:
+                            stats['new_leads'] += 1
+                    else:
+                        stats['new_leads'] += 1
+                
+                # Process in normal mode
+                if not dry_run:
+                    lead_id = zoho_client.create_or_update_lead(call, lead_owner, extension_names, rc_client)
+                    
+                    if lead_id:
+                        stats['processed_calls'] += 1
+                        logger.info(f"Processed call {call.get('id')} - Lead ID: {lead_id}")
+                        
+                        # Track recording statistics
+                        if has_recording:
+                            if call.get('recording', {}).get('id'):
+                                stats['recordings_attached'] += 1
+                    else:
+                        logger.warning(f"Failed to process call {call.get('id')}")
+                        stats['skipped_calls'] += 1
+                        stats['api_errors'] += 1
+                else:
+                    # Dry run mode
+                    logger.info(f"[DRY-RUN] Would process qualified call {call.get('id')} from {phone_number}")
+                    stats['processed_calls'] += 1
+                    
+                    # Log what would happen with recordings
+                    if has_recording:
+                        logger.info(f"[DRY-RUN] Would have attached recording {call.get('recording', {}).get('id')} to lead for {phone_number}")
+            else:
+                reason = decision_data.get('reason', 'Unknown reason')
+                logger.info(f"Skipped call {call.get('id')} - Not qualified: {reason}")
+                stats['skipped_calls'] += 1
+                
+        except Exception as e:
+            logger.error(f"Error processing call {call.get('id', 'unknown')}: {e}")
+            stats['api_errors'] += 1
+            continue
             
         # Add a small delay between processing calls to respect rate limits
         time.sleep(0.5)
@@ -866,6 +1130,9 @@ def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_name
     logger.info(f"  New leads created: {stats['new_leads'] if not dry_run else '0 (dry run)'}")
     logger.info(f"  Calls skipped: {stats['skipped_calls']}")
     logger.info(f"  Recordings attached: {stats['recordings_attached'] if not dry_run else '0 (dry run)'}")
+    logger.info(f"  Recording failures: {stats['recording_failures']}")
+    logger.info(f"  Duplicate processing prevented: {stats['duplicate_prevented']}")
+    logger.info(f"  API errors encountered: {stats['api_errors']}")
 
     return stats
 
@@ -971,7 +1238,9 @@ def main():
             'new_leads': 0,
             'skipped_calls': 0,
             'recordings_attached': 0,
-            'recording_failures': 0
+            'recording_failures': 0,
+            'duplicate_prevented': 0,
+            'api_errors': 0
         }
         
         # Process each extension
@@ -1015,6 +1284,9 @@ def main():
         logger.info(f"  New leads created: {overall_stats['new_leads'] if not args.dry_run else '0 (dry run)'}")
         logger.info(f"  Calls skipped: {overall_stats['skipped_calls']}")
         logger.info(f"  Recordings attached: {overall_stats['recordings_attached'] if not args.dry_run else '0 (dry run)'}")
+        logger.info(f"  Recording failures: {overall_stats.get('recording_failures', 0)}")
+        logger.info(f"  Duplicate processing prevented: {overall_stats.get('duplicate_prevented', 0)}")
+        logger.info(f"  API errors encountered: {overall_stats.get('api_errors', 0)}")
         
         logger.info(f"AcceptedCalls.py - Completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("Processing completed successfully")
