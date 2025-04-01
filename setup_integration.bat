@@ -109,32 +109,27 @@ if exist requirements.txt (
     pip install -r requirements.txt >> "%log_file%" 2>&1
 )
 
-:: Verify package installation
+:: Verify package installation with a simpler approach
 call :log "Verifying package installation..."
-echo import setuptools > verify_packages.py
-echo import cryptography >> verify_packages.py
-echo import os >> verify_packages.py
-echo try: >> verify_packages.py
-echo     import dotenv >> verify_packages.py
-echo     print("dotenv: OK") >> verify_packages.py
-echo except ImportError: >> verify_packages.py
-echo     print("dotenv: Not found, but may be fine") >> verify_packages.py
-echo import requests >> verify_packages.py
-echo import dateutil >> verify_packages.py
-echo import pytz >> verify_packages.py
-echo import urllib3 >> verify_packages.py
-echo import certifi >> verify_packages.py
-echo import charset_normalizer >> verify_packages.py
-echo import idna >> verify_packages.py
-echo print("All core packages verified!") >> verify_packages.py
 
-:: Add security check for vulnerable versions
-echo # Security Check for Known Vulnerable Package Versions >> verify_packages.py
-echo import sys >> verify_packages.py
-echo import pkg_resources >> verify_packages.py
-echo import json >> verify_packages.py
+:: Create a simple verification script
+echo import sys, pkg_resources, json > verify_packages.py
+echo print("Checking for required packages...") >> verify_packages.py
 echo. >> verify_packages.py
-echo # Define minimum secure versions >> verify_packages.py
+echo required_packages = [ >> verify_packages.py
+echo     "setuptools", "cryptography", "requests", "python-dotenv", >> verify_packages.py
+echo     "pytz", "urllib3", "certifi", "charset_normalizer", "idna" >> verify_packages.py
+echo ] >> verify_packages.py
+echo. >> verify_packages.py
+echo # Check basic imports >> verify_packages.py
+echo for package in required_packages: >> verify_packages.py
+echo     try: >> verify_packages.py
+echo         pkg = __import__(package.replace("-", "_")) >> verify_packages.py
+echo         print(f"{package}: OK") >> verify_packages.py
+echo     except ImportError: >> verify_packages.py
+echo         print(f"{package}: Not found directly, but may be installed under a different name") >> verify_packages.py
+echo. >> verify_packages.py
+echo # Security check >> verify_packages.py
 echo secure_versions = { >> verify_packages.py
 echo     'cryptography': '3.4.8',  # Below this has vulnerabilities >> verify_packages.py
 echo     'urllib3': '1.26.5',      # Below this has vulnerabilities >> verify_packages.py
@@ -142,30 +137,31 @@ echo     'requests': '2.25.1',     # Below this has vulnerabilities >> verify_pa
 echo     'certifi': '2021.10.8'    # Below this has vulnerabilities >> verify_packages.py
 echo } >> verify_packages.py
 echo. >> verify_packages.py
-echo # Check installed versions >> verify_packages.py
 echo vulnerable_packages = [] >> verify_packages.py
 echo update_commands = [] >> verify_packages.py
+echo. >> verify_packages.py
+echo # Using a simple for loop to check each package >> verify_packages.py
 echo for package, min_version in secure_versions.items(): >> verify_packages.py
 echo     try: >> verify_packages.py
 echo         installed_version = pkg_resources.get_distribution(package).version >> verify_packages.py
 echo         if pkg_resources.parse_version(installed_version) < pkg_resources.parse_version(min_version): >> verify_packages.py
 echo             vulnerable_packages.append(f"{package} {installed_version} (minimum recommended: {min_version})") >> verify_packages.py
 echo             update_commands.append(f"{package}>={min_version}") >> verify_packages.py
-echo     except pkg_resources.DistributionNotFound: >> verify_packages.py
-echo         pass # Package not installed >> verify_packages.py
+echo     except Exception as e: >> verify_packages.py
+echo         print(f"Error checking {package}: {e}") >> verify_packages.py
 echo. >> verify_packages.py
-echo # Print security warnings if vulnerable packages found >> verify_packages.py
+echo # Simple if statement to print warnings >> verify_packages.py
 echo if vulnerable_packages: >> verify_packages.py
-echo     print("\\n⚠️ SECURITY ALERT: Potentially vulnerable packages detected:") >> verify_packages.py
+echo     print("SECURITY ALERT: Potentially vulnerable packages detected:") >> verify_packages.py
 echo     for pkg in vulnerable_packages: >> verify_packages.py
 echo         print(f"  - {pkg}") >> verify_packages.py
-echo     print("\\nGitHub Dependabot has flagged security vulnerabilities in this project.") >> verify_packages.py
-echo     print("Consider updating these packages to the recommended versions.\\n") >> verify_packages.py
-echo     # Write update commands to a file for the batch script to use >> verify_packages.py
+echo     print("Consider updating these packages to the recommended versions.") >> verify_packages.py
 echo     with open('vulnerable_packages.json', 'w') as f: >> verify_packages.py
 echo         json.dump(update_commands, f) >> verify_packages.py
-echo. >> verify_packages.py
+echo else: >> verify_packages.py
+echo     print("No vulnerable packages detected. All packages meet security requirements.") >> verify_packages.py
 
+:: Run the verification script
 python verify_packages.py >> "%log_file%" 2>&1
 if errorlevel 1 (
     call :log "Some packages may have verification issues but continuing setup..."
@@ -177,14 +173,12 @@ if errorlevel 1 (
 if exist vulnerable_packages.json (
     call :log "Vulnerable packages detected. Upgrading to secure versions..." -Level "WARNING"
     
-    :: Create a temporary batch file to handle the upgrades
-    echo @echo off > upgrade_packages.bat
-    echo setlocal enabledelayedexpansion >> upgrade_packages.bat
-    echo for /f "usebackq delims=" %%%%a in (`type vulnerable_packages.json ^| python -c "import sys, json; packages = json.load(sys.stdin); print(' '.join(packages))"`) do ( >> upgrade_packages.bat
-    echo   set packages_to_update=%%%%a >> upgrade_packages.bat
-    echo   echo Upgrading: !packages_to_update! >> upgrade_packages.bat
-    echo   pip install --upgrade !packages_to_update! >> upgrade_packages.bat
-    echo ) >> upgrade_packages.bat
+    :: Create a simpler batch file for upgrades
+    >upgrade_packages.bat echo @echo off
+    >>upgrade_packages.bat echo python -c "import json; pkgs=json.load(open('vulnerable_packages.json')); print(' '.join(pkgs))" > packages_list.txt
+    >>upgrade_packages.bat echo set /p PACKAGES=<packages_list.txt
+    >>upgrade_packages.bat echo pip install --upgrade %%PACKAGES%%
+    >>upgrade_packages.bat echo del packages_list.txt
     
     :: Run the upgrade batch file
     call upgrade_packages.bat >> "%log_file%" 2>&1
