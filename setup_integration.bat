@@ -7,6 +7,12 @@ if not exist logs mkdir logs
 :: Set up logging
 set "log_file=logs\setup_integration_%date:~-4,4%%date:~-10,2%%date:~-7,2%_%time:~0,2%%time:~3,2%%time:~6,2%.log"
 
+:: Python installation variables
+set "PYTHON_VERSION=3.8.10"
+set "PYTHON_URL=https://www.python.org/ftp/python/3.8.10/python-3.8.10-amd64.exe"
+set "PYTHON_INSTALLER=%TEMP%\python-installer.exe"
+set "PYTHON_PATH=%LOCALAPPDATA%\Programs\Python\Python38"
+
 :: Define the log function at the beginning but skip over it using GOTO
 goto :start_script
 
@@ -30,6 +36,49 @@ if errorlevel 1 (
     )
 )
 call :log "Successfully downloaded %filename%"
+exit /b 0
+
+:check_python
+where python >nul 2>&1
+if errorlevel 1 (
+    call :log "Python not found in PATH"
+    exit /b 1
+)
+
+python --version 2>nul | findstr /r "3\.[8-9]\|3\.1[0-9]" >nul
+if errorlevel 1 (
+    call :log "Python 3.8 or higher not found"
+    exit /b 1
+)
+
+call :log "Python 3.8+ found"
+exit /b 0
+
+:install_python
+call :log "Downloading Python %PYTHON_VERSION% installer..."
+powershell -Command "Invoke-WebRequest -Uri '%PYTHON_URL%' -OutFile '%PYTHON_INSTALLER%'" >> "%log_file%" 2>&1
+if errorlevel 1 (
+    call :log "Failed to download Python installer"
+    exit /b 1
+)
+
+call :log "Installing Python %PYTHON_VERSION%..."
+call :log "This may take a few minutes..."
+"%PYTHON_INSTALLER%" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 Include_doc=0 TargetDir="%PYTHON_PATH%" >> "%log_file%" 2>&1
+if errorlevel 1 (
+    call :log "Python installation failed"
+    exit /b 1
+)
+
+call :log "Python installed successfully. Refreshing environment variables..."
+:: Refresh PATH environment variable
+for /f "tokens=2*" %%a in ('reg query HKCU\Environment /v PATH') do set "USER_PATH=%%b"
+setx PATH "%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%USER_PATH%" >nul
+
+:: Update current session PATH
+set "PATH=%PYTHON_PATH%;%PYTHON_PATH%\Scripts;%PATH%"
+
+call :log "Environment variables updated"
 exit /b 0
 
 :start_script
@@ -59,12 +108,42 @@ if not "%github_status%"=="200" (
 call :log "GitHub repository is accessible. Continuing setup..."
 
 :: Check if Python is installed
-python --version >nul 2>&1
+call :log "Checking for Python installation..."
+call :check_python
 if errorlevel 1 (
-    call :log "Python is not installed. Please install Python 3.8 or later."
-    pause
-    exit /b 1
+    call :log "Python 3.8 or higher is required but not found."
+    choice /c YN /m "Would you like to automatically install Python 3.8?"
+    if errorlevel 2 (
+        call :log "Python installation declined."
+        call :log "Please install Python 3.8 or later manually from https://www.python.org/downloads/"
+        call :log "IMPORTANT: Check 'Add Python to PATH' during installation"
+        pause
+        exit /b 1
+    )
+    if errorlevel 1 (
+        call :log "Installing Python 3.8..."
+        call :install_python
+        if errorlevel 1 (
+            call :log "Failed to install Python. Please install manually from https://www.python.org/downloads/"
+            call :log "IMPORTANT: Check 'Add Python to PATH' during installation"
+            pause
+            exit /b 1
+        )
+        
+        call :log "Verifying Python installation..."
+        call :check_python
+        if errorlevel 1 (
+            call :log "Python was installed but could not be found in PATH."
+            call :log "You may need to restart your computer and run this script again."
+            pause
+            exit /b 1
+        )
+        
+        call :log "Python installation successful!"
+    )
 )
+
+call :log "Python is properly installed. Continuing setup..."
 
 :: Create virtual environment if it doesn't exist
 if not exist .venv (

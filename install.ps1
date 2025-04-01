@@ -9,6 +9,8 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 $repoUrl = "https://raw.githubusercontent.com/inimical023/rc_zoho/main"
 $repoApiUrl = "https://api.github.com/repos/inimical023/rc_zoho"
 $requiredPythonVersion = "3.8"
+$pythonInstallerUrl = "https://www.python.org/ftp/python/3.8.10/python-3.8.10-amd64.exe"
+$pythonInstallDir = "$env:LOCALAPPDATA\Programs\Python\Python38"
 
 # Check latest commit information
 try {
@@ -167,15 +169,80 @@ function Test-PythonInstallation {
     }
 }
 
+# Function to install Python
+function Install-Python {
+    Write-Log "Installing Python $requiredPythonVersion..."
+    
+    # Create temporary directory for the installer
+    $tempDir = Join-Path $env:TEMP "PythonInstall"
+    New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+    $installerPath = Join-Path $tempDir "python-installer.exe"
+    
+    # Download Python installer
+    Write-Log "Downloading Python installer from $pythonInstallerUrl"
+    try {
+        Invoke-WebRequest -Uri $pythonInstallerUrl -OutFile $installerPath
+    } catch {
+        Write-Log "Failed to download Python installer: $_" -Level "ERROR"
+        return $false
+    }
+    
+    # Run installer with necessary flags
+    Write-Log "Running Python installer..."
+    $installArgs = @(
+        "/quiet",
+        "InstallAllUsers=0",
+        "PrependPath=1",
+        "Include_test=0",
+        "Include_doc=0",
+        "TargetDir=$pythonInstallDir"
+    )
+    
+    $process = Start-Process -FilePath $installerPath -ArgumentList $installArgs -PassThru -Wait
+    if ($process.ExitCode -ne 0) {
+        Write-Log "Python installation failed with exit code $($process.ExitCode)" -Level "ERROR"
+        return $false
+    }
+    
+    # Update environment PATH for this session
+    $env:Path = "$pythonInstallDir;$pythonInstallDir\Scripts;" + $env:Path
+    
+    Write-Log "Python installation completed. Verifying..." -Level "SUCCESS"
+    return (Test-PythonInstallation)
+}
+
 # Main installation process
 Write-Log "RingCentral-Zoho Integration Setup" -Level "INFO"
 Write-Log "=================================" -Level "INFO"
 
-# Check Python installation
+# Check Python installation and install if needed
 if (-not (Test-PythonInstallation)) {
-    Write-Log "Please install Python $requiredPythonVersion or higher and add it to PATH." -Level "WARNING"
-    Write-Log "Download Python from: https://www.python.org/downloads/" -Level "WARNING"
-    exit 1
+    Write-Log "Python $requiredPythonVersion or higher is required but not found." -Level "WARNING"
+    Write-Host "Would you like to automatically install Python $requiredPythonVersion? (Y/N)"
+    $response = Read-Host
+    if ($response -eq "Y") {
+        $pythonInstalled = Install-Python
+        if (-not $pythonInstalled) {
+            Write-Log "Automatic Python installation failed." -Level "ERROR"
+            Write-Log "Please install Python $requiredPythonVersion or higher manually:" -Level "WARNING"
+            Write-Log "1. Download from: https://www.python.org/downloads/" -Level "WARNING"
+            Write-Log "2. IMPORTANT: Check 'Add Python to PATH' during installation" -Level "WARNING"
+            Write-Log "3. Run this script again after installation" -Level "WARNING"
+            exit 1
+        }
+        # Verify Python is in PATH
+        Write-Log "Verifying Python is in PATH..." -Level "INFO"
+        if (-not (Test-PythonInstallation)) {
+            Write-Log "Python was installed but could not be found in PATH." -Level "ERROR"
+            Write-Log "You may need to restart your computer and run this script again." -Level "WARNING"
+            exit 1
+        }
+    } else {
+        Write-Log "Python installation was declined." -Level "WARNING"
+        Write-Log "Please install Python $requiredPythonVersion or higher and add it to PATH." -Level "WARNING"
+        Write-Log "Download Python from: https://www.python.org/downloads/" -Level "WARNING"
+        exit 1
+    }
 }
 
 # Create installation directory
