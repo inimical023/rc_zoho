@@ -1349,7 +1349,7 @@ class RunScriptTab(ttk.Frame):
             cancel_button.pack(pady=10)
             
             # Force update of the window to show it before starting the process
-            self.root.update()
+            progress_window.update()
             
             # Run the script as a subprocess with pipe for output
             process = subprocess.Popen(
@@ -1371,7 +1371,7 @@ class RunScriptTab(ttk.Frame):
                     output_lines.append(line)
                     output_text.insert(tk.END, line)
                     output_text.see(tk.END)  # Scroll to the end
-                    self.root.update_idletasks()  # Update UI
+                    progress_window.update_idletasks()  # Use progress_window instead of self.root
                 process.stdout.close()
             
             # Start a thread to read output continuously
