@@ -10,6 +10,8 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 import subprocess
+from tkinter import ttk, messagebox
+import threading
 
 # Try importing ttkbootstrap for modern UI styling
 try:
@@ -347,16 +349,11 @@ class CredentialsTab(ttk.Frame):
         self.create_widgets()
 
     def create_widgets(self):
-        # Main container frame with rounded corners if using ttkbootstrap
-        if HAS_TTKBOOTSTRAP:
-            main_frame = ttk.Frame(self, bootstyle="default", padding="15")
-        else:
-            main_frame = ttk.Frame(self, padding="15")
-            
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
-        main_frame.grid_rowconfigure(0, weight=1)
+        # Main container frame without scrollbar
+        main_frame = ttk.Frame(self)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         main_frame.grid_columnconfigure(0, weight=1)
-
+        
         # RingCentral Section with improved styling
         if HAS_TTKBOOTSTRAP:
             rc_frame = ttk.LabelFrame(main_frame, text="RingCentral Credentials", padding="20", bootstyle="primary")
@@ -385,29 +382,45 @@ class CredentialsTab(ttk.Frame):
 
         self.rc_account.insert(0, "~")
 
-        # RingCentral buttons with improved styling
+        # RingCentral buttons with improved styling and fixed position
         rc_buttons_frame = ttk.Frame(rc_frame)
         rc_buttons_frame.grid(row=len(fields), column=0, columnspan=2, pady=15)
+        
+        # Make sure buttons have enough space and are properly aligned
         rc_buttons_frame.grid_columnconfigure(0, weight=1)
         rc_buttons_frame.grid_columnconfigure(1, weight=1)
+        rc_buttons_frame.grid_columnconfigure(2, weight=1)
 
         if HAS_TTKBOOTSTRAP:
             ttk.Button(
                 rc_buttons_frame, 
                 text="Verify RingCentral", 
                 command=self.verify_rc,
-                bootstyle="primary"
-            ).grid(row=0, column=0, padx=5)
+                bootstyle="primary",
+                width=20
+            ).grid(row=0, column=0, padx=10, pady=5, sticky="e")
             
             ttk.Button(
                 rc_buttons_frame, 
                 text="Check Existing", 
                 command=self.check_rc,
-                bootstyle="info"
-            ).grid(row=0, column=1, padx=5)
+                bootstyle="info",
+                width=20
+            ).grid(row=0, column=1, padx=10, pady=5, sticky="w")
         else:
-            ttk.Button(rc_buttons_frame, text="Verify RingCentral", command=self.verify_rc).grid(row=0, column=0, padx=5)
-            ttk.Button(rc_buttons_frame, text="Check Existing", command=self.check_rc).grid(row=0, column=1, padx=5)
+            ttk.Button(
+                rc_buttons_frame, 
+                text="Verify RingCentral", 
+                command=self.verify_rc,
+                width=20
+            ).grid(row=0, column=0, padx=10, pady=5, sticky="e")
+            
+            ttk.Button(
+                rc_buttons_frame, 
+                text="Check Existing", 
+                command=self.check_rc,
+                width=20
+            ).grid(row=0, column=1, padx=10, pady=5, sticky="w")
 
         # Zoho Section with improved styling
         if HAS_TTKBOOTSTRAP:
@@ -433,43 +446,68 @@ class CredentialsTab(ttk.Frame):
             ttk.Label(zoho_frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 10), pady=7)
             entry.grid(row=i, column=1, sticky="ew", pady=7)
 
-        # Zoho buttons with improved styling
+        # Zoho buttons with improved styling and fixed position
         zoho_buttons_frame = ttk.Frame(zoho_frame)
         zoho_buttons_frame.grid(row=len(fields), column=0, columnspan=2, pady=15)
+        
+        # Make sure buttons have enough space and are properly aligned
         zoho_buttons_frame.grid_columnconfigure(0, weight=1)
         zoho_buttons_frame.grid_columnconfigure(1, weight=1)
+        zoho_buttons_frame.grid_columnconfigure(2, weight=1)
 
         if HAS_TTKBOOTSTRAP:
             ttk.Button(
                 zoho_buttons_frame, 
                 text="Verify Zoho", 
                 command=self.verify_zoho,
-                bootstyle="primary"
-            ).grid(row=0, column=0, padx=5)
+                bootstyle="primary",
+                width=20
+            ).grid(row=0, column=0, padx=10, pady=5, sticky="e")
             
             ttk.Button(
                 zoho_buttons_frame, 
                 text="Check Existing", 
                 command=self.check_zoho,
-                bootstyle="info"
-            ).grid(row=0, column=1, padx=5)
+                bootstyle="info",
+                width=20
+            ).grid(row=0, column=1, padx=10, pady=5, sticky="w")
         else:
-            ttk.Button(zoho_buttons_frame, text="Verify Zoho", command=self.verify_zoho).grid(row=0, column=0, padx=5)
-            ttk.Button(zoho_buttons_frame, text="Check Existing", command=self.check_zoho).grid(row=0, column=1, padx=5)
+            ttk.Button(
+                zoho_buttons_frame, 
+                text="Verify Zoho", 
+                command=self.verify_zoho,
+                width=20
+            ).grid(row=0, column=0, padx=10, pady=5, sticky="e")
+            
+            ttk.Button(
+                zoho_buttons_frame, 
+                text="Check Existing", 
+                command=self.check_zoho,
+                width=20
+            ).grid(row=0, column=1, padx=10, pady=5, sticky="w")
 
         # Submit Button with improved styling
+        submit_frame = ttk.Frame(main_frame)
+        submit_frame.grid(row=2, column=0, sticky="ew", pady=20)
+        submit_frame.grid_columnconfigure(0, weight=1)
+        
         if HAS_TTKBOOTSTRAP:
             self.submit_button = ttk.Button(
-                main_frame, 
+                submit_frame, 
                 text="Submit", 
                 command=self.submit_credentials,
                 bootstyle="success",
-                width=15
+                width=20
             )
         else:
-            self.submit_button = ttk.Button(main_frame, text="Submit", command=self.submit_credentials)
+            self.submit_button = ttk.Button(
+                submit_frame, 
+                text="Submit", 
+                command=self.submit_credentials,
+                width=20
+            )
             
-        self.submit_button.grid(row=2, column=0, pady=20)
+        self.submit_button.grid(row=0, column=0, pady=10)
         self.submit_button.state(['disabled'])
 
         # Load existing credentials
@@ -693,6 +731,7 @@ class ExtensionsTab(ttk.Frame):
         main_frame = ttk.Frame(self)
         main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(1, weight=1)  # Center column
         main_frame.grid_columnconfigure(2, weight=1)
 
         # Available Queues Section
@@ -709,6 +748,26 @@ class ExtensionsTab(ttk.Frame):
         scrollbar = ttk.Scrollbar(queues_frame, orient=tk.VERTICAL, command=self.available_queues.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.available_queues['yscrollcommand'] = scrollbar.set
+        
+        # Add buttons under Available Queue
+        queues_buttons_frame = ttk.Frame(queues_frame)
+        queues_buttons_frame.grid(row=1, column=0, sticky="ew", pady=10)
+        queues_buttons_frame.grid_columnconfigure(0, weight=1)
+        queues_buttons_frame.grid_columnconfigure(1, weight=1)
+        
+        ttk.Button(
+            queues_buttons_frame, 
+            text="Add Selected →", 
+            command=self.add_selected_queues, 
+            width=15
+        ).grid(row=0, column=0, padx=5)
+        
+        ttk.Button(
+            queues_buttons_frame, 
+            text="Remove Selected ←", 
+            command=self.remove_selected_extensions, 
+            width=15
+        ).grid(row=0, column=1, padx=5)
 
         # Current Extensions Section
         current_frame = ttk.LabelFrame(main_frame, text="Current Extensions", padding="10")
@@ -724,24 +783,26 @@ class ExtensionsTab(ttk.Frame):
         scrollbar = ttk.Scrollbar(current_frame, orient=tk.VERTICAL, command=self.current_extensions.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.current_extensions['yscrollcommand'] = scrollbar.set
-
-        # Buttons Section
-        buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.grid(row=1, column=0, columnspan=3, pady=20, sticky="ew")
-        buttons_frame.grid_columnconfigure(0, weight=1)
-        buttons_frame.grid_columnconfigure(1, weight=1)
-
-        # Left side buttons
-        left_buttons = ttk.Frame(buttons_frame)
-        left_buttons.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(left_buttons, text="Add Selected", command=self.add_selected_queues, width=15).pack(side=tk.LEFT, padx=5)
-        ttk.Button(left_buttons, text="Remove Selected", command=self.remove_selected_extensions, width=15).pack(side=tk.LEFT, padx=5)
-
-        # Right side buttons
-        right_buttons = ttk.Frame(buttons_frame)
-        right_buttons.pack(side=tk.RIGHT, fill=tk.X, expand=True)
-        ttk.Button(right_buttons, text="Refresh Queues", command=self.load_available_queues, width=15).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(right_buttons, text="Save Changes", command=self.save_changes, width=15).pack(side=tk.RIGHT, padx=5)
+        
+        # Add buttons under Current Extensions
+        current_buttons_frame = ttk.Frame(current_frame)
+        current_buttons_frame.grid(row=1, column=0, sticky="ew", pady=10)
+        current_buttons_frame.grid_columnconfigure(0, weight=1)
+        current_buttons_frame.grid_columnconfigure(1, weight=1)
+        
+        ttk.Button(
+            current_buttons_frame, 
+            text="Refresh Queues", 
+            command=self.load_available_queues, 
+            width=15
+        ).grid(row=0, column=0, padx=5)
+        
+        ttk.Button(
+            current_buttons_frame, 
+            text="Save Changes", 
+            command=self.save_changes, 
+            width=15
+        ).grid(row=0, column=1, padx=5)
 
     def load_available_queues(self):
         """Load available call queues from RingCentral."""
@@ -913,29 +974,66 @@ class LeadOwnersTab(ttk.Frame):
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.lead_owners_listbox['yscrollcommand'] = scrollbar.set
 
-        # Buttons Section
-        buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.grid(row=1, column=0, columnspan=3, pady=10, sticky="ew")
-        buttons_frame.grid_columnconfigure(0, weight=1)
-        buttons_frame.grid_columnconfigure(1, weight=1)
+        # Add buttons under each section
+        # Buttons for Active Users
+        users_buttons_frame = ttk.Frame(users_frame)
+        users_buttons_frame.grid(row=1, column=0, sticky="ew", pady=10)
+        users_buttons_frame.grid_columnconfigure(0, weight=1)
+        users_buttons_frame.grid_columnconfigure(1, weight=1)
 
-        # Left side buttons
-        left_buttons = ttk.Frame(buttons_frame)
-        left_buttons.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(left_buttons, text="Select by Role", command=self.select_by_role).pack(side=tk.LEFT, padx=5)
-        ttk.Button(left_buttons, text="Clear Selection", command=self.clear_selection).pack(side=tk.LEFT, padx=5)
-
-        # Middle buttons
-        middle_buttons = ttk.Frame(buttons_frame)
-        middle_buttons.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(middle_buttons, text="Add Selected", command=self.add_selected_users).pack(side=tk.LEFT, padx=5)
-        ttk.Button(middle_buttons, text="Remove Selected", command=self.remove_selected_owners).pack(side=tk.LEFT, padx=5)
-
-        # Right side buttons
-        right_buttons = ttk.Frame(buttons_frame)
-        right_buttons.pack(side=tk.RIGHT, fill=tk.X, expand=True)
-        ttk.Button(right_buttons, text="Refresh Data", command=self.refresh_data).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(right_buttons, text="Save Changes", command=self.save_changes).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(
+            users_buttons_frame, 
+            text="Select by Role", 
+            command=self.select_by_role, 
+            width=15
+        ).grid(row=0, column=0, padx=5)
+        
+        ttk.Button(
+            users_buttons_frame, 
+            text="Clear Selection", 
+            command=self.clear_selection, 
+            width=15
+        ).grid(row=0, column=1, padx=5)
+        
+        # Buttons for Roles
+        roles_buttons_frame = ttk.Frame(roles_frame)
+        roles_buttons_frame.grid(row=1, column=0, sticky="ew", pady=10)
+        roles_buttons_frame.grid_columnconfigure(0, weight=1)
+        roles_buttons_frame.grid_columnconfigure(1, weight=1)
+        
+        ttk.Button(
+            roles_buttons_frame, 
+            text="Add Selected", 
+            command=self.add_selected_users, 
+            width=15
+        ).grid(row=0, column=0, padx=5)
+        
+        ttk.Button(
+            roles_buttons_frame, 
+            text="Remove Selected", 
+            command=self.remove_selected_owners, 
+            width=15
+        ).grid(row=0, column=1, padx=5)
+        
+        # Buttons for Lead Owners
+        lead_owners_buttons_frame = ttk.Frame(lead_owners_frame)
+        lead_owners_buttons_frame.grid(row=1, column=0, sticky="ew", pady=10)
+        lead_owners_buttons_frame.grid_columnconfigure(0, weight=1)
+        lead_owners_buttons_frame.grid_columnconfigure(1, weight=1)
+        
+        ttk.Button(
+            lead_owners_buttons_frame, 
+            text="Refresh Data", 
+            command=self.refresh_data, 
+            width=15
+        ).grid(row=0, column=0, padx=5)
+        
+        ttk.Button(
+            lead_owners_buttons_frame, 
+            text="Save Changes", 
+            command=self.save_changes, 
+            width=15
+        ).grid(row=0, column=1, padx=5)
 
     def load_users(self):
         """Load users from Zoho CRM."""
@@ -1128,15 +1226,16 @@ class RunScriptTab(ttk.Frame):
         self.create_widgets()
 
     def create_widgets(self):
-        # Main container frame
+        # Main container frame without scrollbar
         main_frame = ttk.Frame(self)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         main_frame.grid_columnconfigure(0, weight=1)
 
-        # Description
-        description = ttk.Label(main_frame, text="Run Scripts with Date Range", wraplength=600)
-        description.grid(row=0, column=0, pady=(0, 30))
-
+        # Description with increased padding
+        description = ttk.Label(main_frame, text="Run Scripts with Date Range", 
+                                wraplength=600, font=("Helvetica", 12, "bold"))
+        description.grid(row=0, column=0, pady=(20, 30))
+        
         # Script Selection Frame
         script_frame = ttk.LabelFrame(main_frame, text="Script Selection", padding="15")
         script_frame.grid(row=1, column=0, sticky="ew", pady=(0, 20))
@@ -1150,128 +1249,162 @@ class RunScriptTab(ttk.Frame):
         self.script_combo.set('Select Script')
 
         # Script Description
-        self.description_label = ttk.Label(script_frame, text="Please select a script from the dropdown menu to see its description.", wraplength=500)
+        self.description_label = ttk.Label(script_frame, 
+                                          text="Please select a script from the dropdown menu to see its description.", 
+                                          wraplength=600)
         self.description_label.grid(row=1, column=0, columnspan=2, pady=15)
 
-        # Date Range Frame
+        # Date Range Frame with better spacing
         date_frame = ttk.LabelFrame(main_frame, text="Date Range", padding="15")
         date_frame.grid(row=2, column=0, sticky="ew", pady=(0, 20))
+        date_frame.grid_columnconfigure(0, weight=1)  # Make both columns expandable for centering
         date_frame.grid_columnconfigure(1, weight=1)
-        date_frame.grid_columnconfigure(3, weight=1)
+        date_frame.grid_columnconfigure(2, weight=1)
 
-        # Start Date and Time
-        ttk.Label(date_frame, text="Start Date:").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
+        # Create a container frame for both date entries to allow centering
+        dates_container = ttk.Frame(date_frame)
+        dates_container.grid(row=0, column=0, columnspan=3, pady=10)
+        dates_container.grid_columnconfigure(0, weight=1)  # Labels column
+        dates_container.grid_columnconfigure(1, weight=2)  # Entry fields column
+
+        # Start Date with increased padding and centered layout
+        ttk.Label(dates_container, text="Start Date:").grid(row=0, column=0, sticky="e", padx=(10, 15), pady=15)
         
-        # Date picker frame for start date
-        start_date_frame = ttk.Frame(date_frame)
-        start_date_frame.grid(row=0, column=1, sticky="ew", pady=5)
+        # Date entry frame for start date
+        start_date_frame = ttk.Frame(dates_container)
+        start_date_frame.grid(row=0, column=1, sticky="w", pady=10)
         
-        if HAS_TKCALENDAR:
-            self.start_date_cal = tkcalendar.DateEntry(
-                start_date_frame, 
-                width=12, 
-                background='darkblue', 
-                foreground='white', 
-                borderwidth=2,
-                date_pattern='yyyy-mm-dd',
-                year=self.start_date_default.year,
-                month=self.start_date_default.month,
-                day=self.start_date_default.day
-            )
-            self.start_date_cal.pack(side=tk.LEFT, padx=(0, 5))
-        else:
-            self.start_date_var = tk.StringVar(value=self.start_date_default.strftime("%Y-%m-%d"))
-            self.start_date_entry = ttk.Entry(start_date_frame, width=12, textvariable=self.start_date_var)
-            self.start_date_entry.pack(side=tk.LEFT, padx=(0, 5))
+        # Simple entry with date validation
+        self.start_date_var = tk.StringVar(value=self.start_date_default.strftime("%Y-%m-%d"))
+        self.start_date_entry = ttk.Entry(start_date_frame, width=12, textvariable=self.start_date_var)
+        self.start_date_entry.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Time entry for start time
-        ttk.Label(start_date_frame, text="Time:").pack(side=tk.LEFT, padx=(5, 5))
+        # Time entry for start time with increased spacing
+        ttk.Label(start_date_frame, text="Time:").pack(side=tk.LEFT, padx=(5, 10))
         
         start_hour_var = tk.StringVar(value=f"{self.start_date_default.hour:02d}")
         self.start_hour = ttk.Combobox(start_date_frame, width=3, textvariable=start_hour_var, state="readonly")
         self.start_hour['values'] = [f"{i:02d}" for i in range(24)]
         self.start_hour.pack(side=tk.LEFT)
         
-        ttk.Label(start_date_frame, text=":").pack(side=tk.LEFT)
+        ttk.Label(start_date_frame, text=":").pack(side=tk.LEFT, padx=3)
         
         start_minute_var = tk.StringVar(value=f"{self.start_date_default.minute:02d}")
         self.start_minute = ttk.Combobox(start_date_frame, width=3, textvariable=start_minute_var, state="readonly")
         self.start_minute['values'] = [f"{i:02d}" for i in range(0, 60, 5)]
         self.start_minute.pack(side=tk.LEFT)
         
-        ttk.Label(start_date_frame, text=":").pack(side=tk.LEFT)
+        ttk.Label(start_date_frame, text=":").pack(side=tk.LEFT, padx=3)
         
         start_second_var = tk.StringVar(value=f"{self.start_date_default.second:02d}")
         self.start_second = ttk.Combobox(start_date_frame, width=3, textvariable=start_second_var, state="readonly")
         self.start_second['values'] = [f"{i:02d}" for i in range(0, 60)]
         self.start_second.pack(side=tk.LEFT)
 
-        # End Date and Time
-        ttk.Label(date_frame, text="End Date:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=5)
+        # End Date with increased padding and centered layout
+        ttk.Label(dates_container, text="End Date:").grid(row=1, column=0, sticky="e", padx=(10, 15), pady=15)
         
-        # Date picker frame for end date
-        end_date_frame = ttk.Frame(date_frame)
-        end_date_frame.grid(row=1, column=1, sticky="ew", pady=5)
+        # Date entry frame for end date
+        end_date_frame = ttk.Frame(dates_container)
+        end_date_frame.grid(row=1, column=1, sticky="w", pady=10)
         
-        if HAS_TKCALENDAR:
-            self.end_date_cal = tkcalendar.DateEntry(
-                end_date_frame, 
-                width=12, 
-                background='darkblue', 
-                foreground='white', 
-                borderwidth=2,
-                date_pattern='yyyy-mm-dd',
-                year=self.end_date_default.year,
-                month=self.end_date_default.month,
-                day=self.end_date_default.day
-            )
-            self.end_date_cal.pack(side=tk.LEFT, padx=(0, 5))
-        else:
-            self.end_date_var = tk.StringVar(value=self.end_date_default.strftime("%Y-%m-%d"))
-            self.end_date_entry = ttk.Entry(end_date_frame, width=12, textvariable=self.end_date_var)
-            self.end_date_entry.pack(side=tk.LEFT, padx=(0, 5))
+        # Simple entry with date validation for end date
+        self.end_date_var = tk.StringVar(value=self.end_date_default.strftime("%Y-%m-%d"))
+        self.end_date_entry = ttk.Entry(end_date_frame, width=12, textvariable=self.end_date_var)
+        self.end_date_entry.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Time entry for end time
-        ttk.Label(end_date_frame, text="Time:").pack(side=tk.LEFT, padx=(5, 5))
+        # Time entry for end time with increased spacing
+        ttk.Label(end_date_frame, text="Time:").pack(side=tk.LEFT, padx=(5, 10))
         
         end_hour_var = tk.StringVar(value=f"{self.end_date_default.hour:02d}")
         self.end_hour = ttk.Combobox(end_date_frame, width=3, textvariable=end_hour_var, state="readonly")
         self.end_hour['values'] = [f"{i:02d}" for i in range(24)]
         self.end_hour.pack(side=tk.LEFT)
         
-        ttk.Label(end_date_frame, text=":").pack(side=tk.LEFT)
+        ttk.Label(end_date_frame, text=":").pack(side=tk.LEFT, padx=3)
         
         end_minute_var = tk.StringVar(value=f"{self.end_date_default.minute:02d}")
         self.end_minute = ttk.Combobox(end_date_frame, width=3, textvariable=end_minute_var, state="readonly")
         self.end_minute['values'] = [f"{i:02d}" for i in range(0, 60, 5)]
         self.end_minute.pack(side=tk.LEFT)
         
-        ttk.Label(end_date_frame, text=":").pack(side=tk.LEFT)
+        ttk.Label(end_date_frame, text=":").pack(side=tk.LEFT, padx=3)
         
         end_second_var = tk.StringVar(value=f"{self.end_date_default.second:02d}")
         self.end_second = ttk.Combobox(end_date_frame, width=3, textvariable=end_second_var, state="readonly")
         self.end_second['values'] = [f"{i:02d}" for i in range(0, 60)]
         self.end_second.pack(side=tk.LEFT)
 
-        # Preset buttons for common date ranges
+        # Add date validation
+        self.start_date_entry.bind('<FocusOut>', self.validate_date)
+        self.end_date_entry.bind('<FocusOut>', self.validate_date)
+
+        # Date range presets in a centered frame
         preset_frame = ttk.Frame(date_frame)
-        preset_frame.grid(row=2, column=0, columnspan=2, sticky="w", pady=10)
+        preset_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(20, 10))
+        preset_frame.grid_columnconfigure(0, weight=1)  # Add weight to first column for centering
+        preset_frame.grid_columnconfigure(5, weight=1)  # Add weight to last column for centering
         
-        ttk.Button(preset_frame, text="Today", command=lambda: self.set_date_range("today")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(preset_frame, text="Yesterday", command=lambda: self.set_date_range("yesterday")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(preset_frame, text="Last 7 Days", command=lambda: self.set_date_range("last7days")).pack(side=tk.LEFT, padx=5)
-        ttk.Button(preset_frame, text="This Month", command=lambda: self.set_date_range("thismonth")).pack(side=tk.LEFT, padx=5)
+        # Create a centered container for the buttons
+        buttons_container = ttk.Frame(preset_frame)
+        buttons_container.grid(row=0, column=0, columnspan=6)
+        
+        # Center the preset buttons with proper spacing
+        ttk.Button(buttons_container, text="Today", command=lambda: self.set_date_range("today"), width=12).pack(side=tk.LEFT, padx=8)
+        ttk.Button(buttons_container, text="Yesterday", command=lambda: self.set_date_range("yesterday"), width=12).pack(side=tk.LEFT, padx=8)
+        ttk.Button(buttons_container, text="Last 7 Days", command=lambda: self.set_date_range("last7days"), width=12).pack(side=tk.LEFT, padx=8)
+        ttk.Button(buttons_container, text="This Month", command=lambda: self.set_date_range("thismonth"), width=12).pack(side=tk.LEFT, padx=8)
 
         # Dry Run Checkbox
         self.dry_run_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(date_frame, text="Run in Dry-Run Mode (Preview Only)", variable=self.dry_run_var).grid(row=3, column=0, columnspan=2, pady=15)
+        dry_run_frame = ttk.Frame(main_frame)
+        dry_run_frame.grid(row=4, column=0, sticky="ew", pady=(10, 20))
+        dry_run_frame.grid_columnconfigure(0, weight=1)
+        
+        ttk.Checkbutton(
+            dry_run_frame, 
+            text="Run in Dry-Run Mode (Preview Only)", 
+            variable=self.dry_run_var
+        ).grid(row=0, column=0, pady=5)
 
-        # Run Button
-        run_button = ttk.Button(main_frame, text="Run Script", command=self.run_script)
-        run_button.grid(row=4, column=0, pady=20)
+        # Run Button in a centered frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=5, column=0, sticky="ew", pady=(10, 30))
+        button_frame.grid_columnconfigure(0, weight=1)
+        
+        if HAS_TTKBOOTSTRAP:
+            run_button = ttk.Button(
+                button_frame, 
+                text="Run Script", 
+                command=self.run_script,
+                bootstyle="success",
+                width=20
+            )
+        else:
+            run_button = ttk.Button(
+                button_frame, 
+                text="Run Script", 
+                command=self.run_script,
+                width=20
+            )
+        run_button.grid(row=0, column=0, pady=10)
 
         # Bind script selection change event
         self.script_combo.bind('<<ComboboxSelected>>', self.on_script_selected)
+
+    def validate_date(self, event=None):
+        """Validate date entries to ensure they are in correct format"""
+        try:
+            if event and event.widget == self.start_date_entry:
+                datetime.strptime(self.start_date_var.get(), "%Y-%m-%d")
+            elif event and event.widget == self.end_date_entry:
+                datetime.strptime(self.end_date_var.get(), "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Invalid Date", "Please enter date in YYYY-MM-DD format")
+            if event and event.widget == self.start_date_entry:
+                self.start_date_var.set(self.start_date_default.strftime("%Y-%m-%d"))
+            elif event and event.widget == self.end_date_entry:
+                self.end_date_var.set(self.end_date_default.strftime("%Y-%m-%d"))
 
     def set_date_range(self, preset):
         """Set date range based on preset values"""
@@ -1294,13 +1427,9 @@ class RunScriptTab(ttk.Frame):
             return
             
         # Update the date pickers
-        if HAS_TKCALENDAR:
-            self.start_date_cal.set_date(start)
-            self.end_date_cal.set_date(end)
-        else:
-            self.start_date_var.set(start.strftime("%Y-%m-%d"))
-            self.end_date_var.set(end.strftime("%Y-%m-%d"))
-            
+        self.start_date_var.set(start.strftime("%Y-%m-%d"))
+        self.end_date_var.set(end.strftime("%Y-%m-%d"))
+        
         # Update the time dropdowns
         self.start_hour.set(f"{start.hour:02d}")
         self.start_minute.set(f"{start.minute:02d}")
@@ -1314,12 +1443,8 @@ class RunScriptTab(ttk.Frame):
         """Get formatted date strings from the UI components"""
         try:
             # Get the date component
-            if HAS_TKCALENDAR:
-                start_date = self.start_date_cal.get_date()
-                end_date = self.end_date_cal.get_date()
-            else:
-                start_date = datetime.strptime(self.start_date_var.get(), "%Y-%m-%d").date()
-                end_date = datetime.strptime(self.end_date_var.get(), "%Y-%m-%d").date()
+            start_date = datetime.strptime(self.start_date_var.get(), "%Y-%m-%d").date()
+            end_date = datetime.strptime(self.end_date_var.get(), "%Y-%m-%d").date()
                 
             # Get the time component
             start_hour = int(self.start_hour.get())
@@ -1539,11 +1664,11 @@ class SchedulerSetupTab(ttk.Frame):
         self.create_widgets()
 
     def create_widgets(self):
-        # Main container frame
+        # Main container frame without scrollbar
         main_frame = ttk.Frame(self)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         main_frame.grid_columnconfigure(0, weight=1)
-
+        
         # Description
         description = ttk.Label(
             main_frame, 
@@ -1624,9 +1749,28 @@ class SchedulerSetupTab(ttk.Frame):
         
         ttk.Button(output_frame, text="Browse", command=self.browse_output_dir).grid(row=0, column=2, padx=5)
 
-        # Generate Button
-        generate_button = ttk.Button(main_frame, text="Generate Batch File", command=self.generate_batch_file)
-        generate_button.grid(row=5, column=0, pady=20)
+        # Button Frame with padding to ensure visibility
+        button_frame = ttk.Frame(main_frame)
+        button_frame.grid(row=5, column=0, sticky="ew", pady=(0, 30))
+        button_frame.grid_columnconfigure(0, weight=1)
+        
+        # Generate Button - centered with increased padding
+        if HAS_TTKBOOTSTRAP:
+            generate_button = ttk.Button(
+                button_frame, 
+                text="Generate Batch File", 
+                command=self.generate_batch_file,
+                bootstyle="success",
+                width=20
+            )
+        else:
+            generate_button = ttk.Button(
+                button_frame,
+                text="Generate Batch File",
+                command=self.generate_batch_file,
+                width=20
+            )
+        generate_button.grid(row=0, column=0, pady=25)
 
     def browse_output_dir(self):
         """Open directory browser dialog"""
@@ -1747,67 +1891,88 @@ class UnifiedAdminGUI:
         
         # Set up theme
         if HAS_TTKBOOTSTRAP:
-            style = Style(theme="cosmo")  # Choose from: cosmo, flatly, litera, minty, lumen, sandstone, yeti, etc.
+            style = Style(theme="cosmo")
             self.root.title("RingCentral-Zoho Integration • Admin Tools")
         else:
             self.root.title("RingCentral-Zoho Integration Admin Tools")
-            
-        self.root.geometry("1200x800")
-        self.root.minsize(1000, 700)  # Set minimum window size for better usability
+
+        # Set fixed window size and center it on screen
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
         
-        # Set application icon if PIL is available
-        if HAS_PIL:
-            try:
-                # Create a simple icon with the app initials
-                icon_size = 64
-                icon = Image.new('RGB', (icon_size, icon_size), COLORS["primary"])
-                self.load_and_set_icon()
-            except Exception as e:
-                logger.error(f"Failed to set application icon: {e}")
+        # Use fixed size of 1400x1000
+        window_width = 1400
+        window_height = 1000
+        
+        # Center the window
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2  # Center vertically now that height is smaller
+        
+        # Position may need adjustment if the window would be off-screen
+        if y < 0:
+            y = 0
+        
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Enable window resizing
+        self.root.resizable(True, True)
+        
+        # Set minimum size to ensure content fits
+        self.root.minsize(1024, 800)
         
         # Initialize storage and clients
         self.storage = SecureStorage()
         self.rc_client = None
         self.zoho_client = None
         
-        # Configure root grid
+        # Configure root grid with proper weights
         root.grid_rowconfigure(0, weight=1)
         root.grid_columnconfigure(0, weight=1)
         
-        # Create main frame
-        self.main_frame = ttk.Frame(root, padding="15")
+        # Create main frame with fixed padding
+        self.main_frame = ttk.Frame(root, padding=20)
         self.main_frame.grid(row=0, column=0, sticky="nsew")
-        self.main_frame.grid_rowconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(1, weight=1)
         self.main_frame.grid_columnconfigure(0, weight=1)
 
         # Create header frame
         self.header_frame = ttk.Frame(self.main_frame)
-        self.header_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=(0, 10))
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=10)
+        self.header_frame.grid_columnconfigure(1, weight=1)
         
-        # Add app title and logo in header
+        # Add empty space on the left for padding
+        ttk.Label(self.header_frame, text="", width=8).grid(row=0, column=0)
+        
+        # Add app title and logo in header (centered)
         title_label = ttk.Label(
             self.header_frame, 
             text="RingCentral-Zoho Integration", 
-            font=("Helvetica", 16, "bold"),
+            font=("Helvetica", 14, "bold"),
             bootstyle="default"
         )
-        title_label.pack(side=tk.LEFT, padx=10)
+        title_label.grid(row=0, column=1, padx=50)
         
-        # Add version info in header
+        # Add version info in header (right-aligned)
         version_label = ttk.Label(
             self.header_frame,
             text="v1.0.0",
             bootstyle="default" if HAS_TTKBOOTSTRAP else "default"
         )
-        version_label.pack(side=tk.RIGHT, padx=10)
+        version_label.grid(row=0, column=2, padx=20)
+
+        # Create notebook container with proper weights
+        self.notebook_container = ttk.Frame(self.main_frame)
+        self.notebook_container.grid(row=1, column=0, sticky="nsew", padx=20, pady=10)
+        self.notebook_container.grid_rowconfigure(0, weight=1)
+        self.notebook_container.grid_columnconfigure(0, weight=1)
 
         # Create notebook for tabs
         if HAS_TTKBOOTSTRAP:
-            self.notebook = ttk.Notebook(self.main_frame, bootstyle="default")
+            self.notebook = ttk.Notebook(self.notebook_container, bootstyle="default")
         else:
-            self.notebook = ttk.Notebook(self.main_frame)
-            
-        self.notebook.grid(row=1, column=0, sticky="nsew")
+            self.notebook = ttk.Notebook(self.notebook_container)
+        
+        self.notebook.grid(row=0, column=0, sticky="nsew")
 
         # Create tabs
         self.credentials_tab = CredentialsTab(self.notebook, self.storage)
@@ -1817,31 +1982,61 @@ class UnifiedAdminGUI:
         self.scheduler_tab = SchedulerSetupTab(self.notebook, self.storage)
 
         # Add tabs to notebook
-        self.notebook.add(self.credentials_tab, text='  Setup Credentials  ')
-        self.notebook.add(self.extensions_tab, text='  Manage Extensions  ')
-        self.notebook.add(self.lead_owners_tab, text='  Manage Lead Owners  ')
-        self.notebook.add(self.run_script_tab, text='  Run Script Ad-Hoc  ')
-        self.notebook.add(self.scheduler_tab, text='  Scheduler Setup  ')
-
-        # Configure notebook to expand
-        self.notebook.grid_rowconfigure(0, weight=1)
-        self.notebook.grid_columnconfigure(0, weight=1)
+        self.notebook.add(self.credentials_tab, text='Setup Credentials')
+        self.notebook.add(self.extensions_tab, text='Manage Extensions')
+        self.notebook.add(self.lead_owners_tab, text='Manage Lead Owners')
+        self.notebook.add(self.run_script_tab, text='Run Script')
+        self.notebook.add(self.scheduler_tab, text='Scheduler')
         
-        # Add footer with status information
+        # Add footer frame
         self.footer_frame = ttk.Frame(self.main_frame)
-        self.footer_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(10, 0))
+        self.footer_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=10)
+        self.footer_frame.grid_columnconfigure(1, weight=1)
         
+        # Status label on the left
         self.status_label = ttk.Label(
             self.footer_frame,
             text="Ready",
             bootstyle="default" if HAS_TTKBOOTSTRAP else "default"
         )
-        self.status_label.pack(side=tk.LEFT, padx=10)
+        self.status_label.grid(row=0, column=0, padx=15, sticky="w")
+        
+        # Open Logs button on the right
+        if HAS_TTKBOOTSTRAP:
+            self.logs_button = ttk.Button(
+                self.footer_frame,
+                text="Open Logs Directory",
+                command=self.open_logs_directory,
+                bootstyle="info-outline",
+                width=20
+            )
+        else:
+            self.logs_button = ttk.Button(
+                self.footer_frame,
+                text="Open Logs Directory",
+                command=self.open_logs_directory,
+                width=20
+            )
+        self.logs_button.grid(row=0, column=2, padx=15, pady=5, sticky="e")
         
         # Create required directories
         Path('logs').mkdir(exist_ok=True)
         Path('data').mkdir(exist_ok=True)
-    
+
+    def open_logs_directory(self):
+        """Open the logs directory in the system file explorer"""
+        try:
+            logs_path = os.path.abspath("logs")
+            if sys.platform == 'win32':
+                os.startfile(logs_path)
+            elif sys.platform == 'darwin':  # macOS
+                subprocess.run(['open', logs_path])
+            else:  # Linux
+                subprocess.run(['xdg-open', logs_path])
+        except Exception as e:
+            logger.error(f"Error opening logs directory: {str(e)}")
+            messagebox.showerror("Error", f"Could not open logs directory: {str(e)}")
+
     def load_and_set_icon(self):
         """Create and set a simple app icon"""
         if not HAS_PIL:
