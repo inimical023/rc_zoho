@@ -36,12 +36,12 @@ if errorlevel 1 (
 :: Install required packages
 echo Installing required packages...
 python -m pip install --upgrade pip
-python -m pip install setuptools>=40.0.0
+python -m pip install "setuptools>=40.0.0"
 pip install -r requirements.txt
 
 :: Verify package installation
 echo Verifying package installation...
-python -c "import sys; missing = []; packages = ['setuptools', 'cryptography', 'dotenv', 'requests', 'dateutil', 'pytz', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'win32api', 'ringcentral', 'tkinter']; [missing.append(pkg) for pkg in packages if pkg not in sys.modules and not __import__(pkg, fromlist=['']) in (1,)]; print('Missing packages: ' + ', '.join(missing) if missing else 'All required packages installed successfully!')"
+python -c "import sys; missing = []; packages = ['setuptools', 'cryptography', 'dotenv', 'requests', 'dateutil', 'pytz', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'win32api', 'ringcentral', 'tkinter', 'tkcalendar']; [missing.append(pkg) for pkg in packages if pkg not in sys.modules and not __import__(pkg, fromlist=['']) in (1,)]; print('Missing packages: ' + ', '.join(missing) if missing else 'All required packages installed successfully!')"
 if errorlevel 1 (
     echo Some packages failed to install, but continuing setup process.
 )
@@ -51,16 +51,6 @@ if not exist data mkdir data
 
 :: Create logs directory if it doesn't exist
 if not exist logs mkdir logs
-
-:: Create extensions.txt with the provided extensions
-echo Creating extensions.txt...
-(
-    echo 1263971040
-    echo 1338124040
-    echo 1338137040
-    echo 737929040
-    echo 859647040
-) > data\extensions.txt
 
 :: Download scripts from GitHub
 echo Downloading scripts from GitHub...

@@ -5,6 +5,7 @@ import time  # Add explicit import for time module
 import subprocess
 import sys
 import pkg_resources
+from datetime import datetime, timedelta
 
 def check_and_install_dependencies():
     """Check and install required dependencies."""
@@ -65,15 +66,19 @@ data_dir = os.path.join(base_dir, 'data')
 logs_dir = os.path.join(script_dir, 'logs')
 os.makedirs(logs_dir, exist_ok=True)
 
+# Set up logging with date and time in filename
+current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+log_file = os.path.join(logs_dir, f'accepted_calls_{current_time}.log')
+
 logging.basicConfig(
     level=logging.INFO,
     format=LOG_FORMAT,
     handlers=[
-        logging.FileHandler(os.path.join(logs_dir, 'accepted_recording.log')),
+        logging.FileHandler(log_file),
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger("accepted_recording")
+logger = logging.getLogger("accepted_calls")
 
 
 class RingCentralClient:
@@ -376,6 +381,10 @@ class ZohoClient:
                 else:
                     logger.warning(f"No records found matching criteria: {criteria}")
                     return None
+            elif response.status_code == 204:
+                # 204 means No Content - successful request but no matching records
+                logger.info(f"No records found in Zoho matching criteria: {criteria}")
+                return None
             else:
                 logger.error(f"Error searching records: {response.status_code} - {response.text}")
                 return None
@@ -419,11 +428,86 @@ class ZohoClient:
             logger.error(f"Exception adding note to lead {lead_id}: {e}")
             return None
 
-def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, dry_run=False):
+    def create_or_update_lead(self, call, lead_owner, extension_names):
+        """Create or update a lead in Zoho CRM."""
+        # Check if call has the required structure
+        if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
+            logger.warning(f"Call is missing phone number data, skipping: {call.get('id')}")
+            return
+            
+        phone_number = call['from']['phoneNumber']
+        extension_id = call['to'].get('extensionId')
+        lead_source = extension_names.get(str(extension_id), "Unknown")
+        lead_status = "Accepted Call"  # Set Lead Status to "Accepted Call"
+        first_name = "Unknown Caller"
+        last_name = "Unknown Caller"
+
+        existing_lead = self.search_records("Leads", f"Phone:equals:{phone_number}")
+
+        # Extract call receive time from RingCentral API
+        call_receive_time = call.get('startTime')
+        if call_receive_time:
+            try:
+                # Convert the time to the desired format
+                call_time = datetime.fromisoformat(call_receive_time.replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError as e:
+                logger.error(f"Error parsing startTime: {e}. Using current time.")
+                call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.warning("Call start time not found. Using current time.")
+
+        if existing_lead:
+            lead_id = existing_lead[0]['id']
+            logger.info(f"Existing lead found {lead_id} for {phone_number}. Adding a note.")
+            note_content = f"Accepted call received on {call_time}."
+            self.add_note_to_lead(lead_id, note_content)
+            return lead_id
+        else:
+            # Use the lead_owner['id'] directly from lead_owners.json
+            lead_owner_id = lead_owner['id']
+            data = {
+                "data": [
+                    {
+                        "Phone": phone_number,
+                        "Owner": {"id": lead_owner_id},
+                        "Lead_Source": lead_source,
+                        "Lead_Status": lead_status,
+                        "First_Name": first_name,
+                        "Last_Name": last_name
+                    }
+                ]
+            }
+            logger.debug(f"Creating lead data: {data}")
+            if self.dry_run:
+                logger.info(f"[DRY-RUN] Would have created lead with data: {data}")
+                return None
+            else:
+                lead_id = self.create_zoho_lead(data)
+                if lead_id:
+                    # Add note for new lead creation
+                    note_content = f"New lead created from accepted call received on {call_time}."
+                    self.add_note_to_lead(lead_id, note_content)
+                    logger.info(f"Added creation note to new lead {lead_id}")
+                    return lead_id
+                return None
+
+def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, rc_client, dry_run=False):
     """Process accepted calls and create leads in Zoho CRM."""
     if not call_logs:
         logger.warning("No call logs to process")
         return
+
+    # Initialize statistics
+    stats = {
+        'total_calls': len(call_logs),
+        'processed_calls': 0,
+        'existing_leads': 0,
+        'new_leads': 0,
+        'skipped_calls': 0,
+        'recordings_attached': 0,
+        'recording_failures': 0
+    }
 
     # Create a round-robin iterator for lead owners
     lead_owner_cycle = itertools.cycle(lead_owners)
@@ -432,27 +516,76 @@ def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_name
         # Skip calls that don't have the required data
         if not call.get('from') or not call.get('to'):
             logger.warning(f"Skipping call {call.get('id')} - missing required data")
+            stats['skipped_calls'] += 1
             continue
             
         # Get the extension ID from the call
         extension_id = call['to'].get('extensionId')
-        if not extension_id or extension_id not in extension_ids:
+        if not extension_id or str(extension_id) not in extension_ids:
             logger.warning(f"Skipping call {call.get('id')} - extension {extension_id} not in configured extensions")
+            stats['skipped_calls'] += 1
             continue
+
+        # Get the caller's phone number
+        phone_number = call['from']['phoneNumber']
             
         # Get the next lead owner in the round-robin cycle
         lead_owner = next(lead_owner_cycle)
+
+        # Check if this is an existing lead
+        existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{phone_number}")
+        if existing_lead:
+            stats['existing_leads'] += 1
+        else:
+            stats['new_leads'] += 1
         
         # Create or update the lead in Zoho CRM
-        zoho_client.create_or_update_lead(call, lead_owner, extension_names)
+        lead_id = zoho_client.create_or_update_lead(call, lead_owner, extension_names)
+        stats['processed_calls'] += 1
+
+        # Track recording statistics if the call has a recording
+        if lead_id and 'recording' in call and call['recording'] and 'id' in call['recording']:
+            try:
+                # Extract call receive time for the filename
+                call_receive_time = call.get('startTime')
+                if call_receive_time:
+                    try:
+                        call_time = datetime.fromisoformat(call_receive_time.replace('Z', '+00:00'))
+                    except ValueError:
+                        call_time = datetime.now()
+                else:
+                    call_time = datetime.now()
+                    
+                recording_id = call['recording']['id']
+                if not dry_run:
+                    zoho_client.attach_recording_to_lead(call, lead_id, rc_client, call_time)
+                    stats['recordings_attached'] += 1
+                else:
+                    logger.info(f"[DRY-RUN] Would have attached recording {recording_id} to lead {lead_id}")
+            except Exception as e:
+                logger.error(f"Error attaching recording: {str(e)}")
+                stats['recording_failures'] += 1
+
+    # Log statistics
+    logger.info(f"Call Processing Summary:")
+    logger.info(f"  Total calls found: {stats['total_calls']}")
+    logger.info(f"  Calls processed: {stats['processed_calls']}")
+    logger.info(f"  Existing leads updated: {stats['existing_leads']}")
+    logger.info(f"  New leads created: {stats['new_leads'] if not dry_run else '0 (dry run)'}")
+    logger.info(f"  Calls skipped: {stats['skipped_calls']}")
+    logger.info(f"  Recordings attached: {stats['recordings_attached']}")
+    logger.info(f"  Recording failures: {stats['recording_failures']}")
+
+    return stats
 
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description='Process accepted calls with recordings from RingCentral and create leads in Zoho CRM.')
     parser.add_argument(
-        '--start-date', help='Start date for call logs (YYYY-MM-DDThh:mm:ss)')
-    parser.add_argument('--end-date', help='End date for call logs (YYYY-MM-DDThh:mm:ss)')
+        '--start-date', help='Start date for call logs (YYYY-MM-DD HH:MM:SS)')
+    parser.add_argument('--end-date', help='End date for call logs (YYYY-MM-DD HH:MM:SS)')
+    parser.add_argument('--hours-back', type=int, help='Process calls from the last N hours')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug logging')
     parser.add_argument('--dry-run', action='store_true',
@@ -472,14 +605,37 @@ def parse_arguments():
     
     return parser.parse_args()
 
+def get_date_range(hours_back=None, start_date=None, end_date=None):
+    """Get date range based on input parameters."""
+    if start_date and end_date:
+        # Convert space to 'T' in the datetime strings if needed
+        start_date = start_date.replace(" ", "T") if " " in start_date else start_date
+        end_date = end_date.replace(" ", "T") if " " in end_date else end_date
+        return start_date, end_date
+    elif hours_back:
+        end_date = datetime.now()
+        start_date = end_date - timedelta(hours=hours_back)
+        return start_date.strftime("%Y-%m-%dT%H:%M:%S"), end_date.strftime("%Y-%m-%dT%H:%M:%S")
+    else:
+        # Default to last 24 hours
+        end_date = datetime.now()
+        start_date = end_date - timedelta(hours=24)
+        return start_date.strftime("%Y-%m-%dT%H:%M:%S"), end_date.strftime("%Y-%m-%dT%H:%M:%S")
+
 def main():
     """Main function"""
+    # Set up a default logger in case of early failure
+    default_logger = logging.getLogger("accepted_calls")
     try:
         # Parse command line arguments
         args = parse_arguments()
         
         # Set up logging based on debug flag
-        logger = setup_logging("accepted_calls", args.debug)
+        if args.debug:
+            logger.setLevel(logging.DEBUG)
+            logger.debug("Debug logging enabled")
+        else:
+            logger.setLevel(logging.INFO)
         
         # Get date range for processing
         start_date, end_date = get_date_range(args.hours_back, args.start_date, args.end_date)
@@ -502,19 +658,50 @@ def main():
             return
             
         # Create extension mapping
-        extension_ids = {ext['id'] for ext in extensions}
-        extension_names = {ext['id']: ext['name'] for ext in extensions}
+        extension_ids = {str(ext['id']) for ext in extensions}
+        extension_names = {str(ext['id']): ext['name'] for ext in extensions}
+        
+        # Initialize overall statistics
+        overall_stats = {
+            'total_calls': 0,
+            'processed_calls': 0,
+            'existing_leads': 0,
+            'new_leads': 0,
+            'skipped_calls': 0,
+            'recordings_attached': 0,
+            'recording_failures': 0
+        }
         
         # Process each extension
         for extension in extensions:
             logger.info(f"Processing calls for extension {extension['name']}")
             call_logs = rc_client.get_call_logs(extension['id'], start_date, end_date)
-            process_accepted_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, args.dry_run)
+            stats = process_accepted_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, rc_client, args.dry_run)
             
+            # Aggregate statistics
+            if stats:
+                for key in overall_stats:
+                    overall_stats[key] += stats.get(key, 0)
+            
+        # Log final summary
+        mode = "DRY RUN" if args.dry_run else "PRODUCTION"
+        logger.info(f"FINAL SUMMARY ({mode}):")
+        logger.info(f"  Date range: {start_date} to {end_date}")
+        logger.info(f"  Total extensions processed: {len(extensions)}")
+        logger.info(f"  Total calls found: {overall_stats['total_calls']}")
+        logger.info(f"  Total calls processed: {overall_stats['processed_calls']}")
+        logger.info(f"  Existing leads updated: {overall_stats['existing_leads']}")
+        logger.info(f"  New leads created: {overall_stats['new_leads'] if not args.dry_run else '0 (dry run)'}")
+        logger.info(f"  Calls skipped: {overall_stats['skipped_calls']}")
+        logger.info(f"  Recordings attached: {overall_stats['recordings_attached']}")
+        logger.info(f"  Recording failures: {overall_stats['recording_failures']}")
+        
         logger.info("Processing completed successfully")
         
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        # Use the logger if it was created, otherwise use the default logger
+        log = logger if 'logger' in locals() else default_logger
+        log.error(f"Error in main: {str(e)}")
         raise
 
 if __name__ == "__main__":

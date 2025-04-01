@@ -74,11 +74,15 @@ class SecureStorage:
     """Secure storage for credentials and configuration"""
     def __init__(self):
         load_dotenv()
-        self.data_dir = Path('data')
+        # Get the script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        # Use data directory inside the script directory
+        self.data_dir = Path(script_dir) / 'data'
         self.data_dir.mkdir(exist_ok=True)
         
         # Create logs directory if it doesn't exist
-        Path('logs').mkdir(exist_ok=True)
+        logs_dir = Path(script_dir) / 'logs'
+        logs_dir.mkdir(exist_ok=True)
         
         self.key_file = self.data_dir / 'encryption.key'
         self.credentials_file = self.data_dir / 'credentials.enc'
@@ -114,11 +118,6 @@ class SecureStorage:
             decrypted_data = self.cipher_suite.decrypt(encrypted_data)
             credentials = json.loads(decrypted_data.decode())
             
-            timestamp = datetime.fromisoformat(credentials['timestamp'])
-            if datetime.now() - timestamp > timedelta(hours=1):
-                logger.warning("Credentials have expired")
-                return None
-            
             return credentials
         except Exception as e:
             logger.error(f"Error loading credentials: {str(e)}")
@@ -149,13 +148,20 @@ class SecureStorage:
 def setup_logging(logger_name):
     """Configure logging with consistent format and handlers"""
     logger = logging.getLogger(logger_name)
+    
+    # Check if logger already has handlers to avoid duplicate output
+    if logger.handlers:
+        return logger
+        
     logger.setLevel(logging.INFO)
     
-    # Create logs directory if it doesn't exist
-    Path('logs').mkdir(exist_ok=True)
+    # Get the script directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    logs_dir = Path(script_dir) / 'logs'
+    logs_dir.mkdir(exist_ok=True)
     
     # Create handlers
-    file_handler = logging.FileHandler(os.path.join('logs', f'{logger_name}.log'))
+    file_handler = logging.FileHandler(logs_dir / f'{logger_name}.log')
     console_handler = logging.StreamHandler()
     
     # Create formatters and add it to handlers

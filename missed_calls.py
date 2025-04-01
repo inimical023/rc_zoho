@@ -25,16 +25,23 @@ data_dir = os.path.join(base_dir, 'data')
 logs_dir = os.path.join(script_dir, 'logs')
 os.makedirs(logs_dir, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format=LOG_FORMAT,
-    handlers=[
-        logging.FileHandler(os.path.join(logs_dir, 'missed_calls.log')),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("missed_calls")
+# Set up logging with date and time in filename
+current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+log_file = os.path.join(logs_dir, f'missed_calls_{current_time}.log')
 
+# If logger already has handlers, we'll remove them to avoid duplicate logs
+if logger.handlers:
+    for handler in logger.handlers:
+        logger.removeHandler(handler)
+
+# Add new handlers with the timestamped log file
+file_handler = logging.FileHandler(log_file)
+console_handler = logging.StreamHandler()
+formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 class RingCentralClient:
     """Client for interacting with the RingCentral API."""
@@ -342,6 +349,10 @@ class ZohoClient:
                 else:
                     logger.warning(f"No records found matching criteria: {criteria}")
                     return None
+            elif response.status_code == 204:
+                # 204 means No Content - successful request but no matching records
+                logger.info(f"No records found in Zoho matching criteria: {criteria}")
+                return None
             else:
                 logger.error(f"Error searching records: {response.status_code} - {response.text}")
                 return None
@@ -361,7 +372,13 @@ def configure_logging(debug=False):
 
 def load_extensions(config_path=None):
     """Load extension IDs and names from extensions.json."""
-    config_file = config_path or os.path.join(data_dir, 'extensions.json')
+    if config_path:
+        config_file = config_path
+    else:
+        # Get the script directory and use paths relative to it
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_file = os.path.join(script_dir, 'data', 'extensions.json')
+        
     try:
         with open(config_file, 'r') as f:
             extensions_data = json.load(f)
@@ -382,7 +399,13 @@ def load_extensions(config_path=None):
 
 def load_lead_owners(config_path=None):
     """Load lead owners from lead_owners.json."""
-    config_file = config_path or os.path.join(data_dir, 'lead_owners.json')
+    if config_path:
+        config_file = config_path
+    else:
+        # Get the script directory and use paths relative to it
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        config_file = os.path.join(script_dir, 'data', 'lead_owners.json')
+        
     try:
         with open(config_file, 'r') as f:
             lead_owners = json.load(f)
@@ -411,26 +434,58 @@ def process_missed_calls(call_logs, zoho_client, extension_ids, extension_names,
         logger.warning("No call logs to process")
         return
 
-    # Create a round-robin iterator for lead owners
-    lead_owner_cycle = itertools.cycle(lead_owners)
-    
+    # Initialize counters for statistics
+    stats = {
+        'total_calls': len(call_logs),
+        'processed_calls': 0,
+        'existing_leads': 0,
+        'new_leads': 0,
+        'skipped_calls': 0
+    }
+
+    # Create a round-robin cycle of lead owners
+    owner_cycle = itertools.cycle(lead_owners)
+
     for call in call_logs:
-        # Skip calls that don't have the required data
-        if not call.get('from') or not call.get('to'):
-            logger.warning(f"Skipping call {call.get('id')} - missing required data")
+        # Skip invalid calls
+        if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
+            logger.warning(f"Call is missing phone number data, skipping: {call.get('id')}")
+            stats['skipped_calls'] += 1
             continue
-            
-        # Get the extension ID from the call
+
+        # Skip calls not for configured extensions
         extension_id = call['to'].get('extensionId')
-        if not extension_id or extension_id not in extension_ids:
+        if str(extension_id) not in extension_ids:
             logger.warning(f"Skipping call {call.get('id')} - extension {extension_id} not in configured extensions")
+            stats['skipped_calls'] += 1
             continue
-            
-        # Get the next lead owner in the round-robin cycle
-        lead_owner = next(lead_owner_cycle)
-        
-        # Create or update the lead in Zoho CRM
+
+        # Get the caller's phone number
+        phone_number = call['from']['phoneNumber']
+
+        # Check if this is an existing lead
+        existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{phone_number}")
+        if existing_lead:
+            stats['existing_leads'] += 1
+        else:
+            stats['new_leads'] += 1
+
+        # Get the next lead owner in the cycle
+        lead_owner = next(owner_cycle)
+
+        # Create or update the lead
         zoho_client.create_or_update_lead(call, lead_owner, extension_names)
+        stats['processed_calls'] += 1
+
+    # Log and return statistics
+    logger.info(f"Call Processing Summary:")
+    logger.info(f"  Total calls found: {stats['total_calls']}")
+    logger.info(f"  Calls processed: {stats['processed_calls']}")
+    logger.info(f"  Existing leads updated: {stats['existing_leads']}")
+    logger.info(f"  New leads created: {stats['new_leads'] if not dry_run else '0 (dry run)'}")
+    logger.info(f"  Calls skipped: {stats['skipped_calls']}")
+    
+    return stats
 
 
 def parse_arguments():
@@ -440,6 +495,7 @@ def parse_arguments():
     parser.add_argument(
         '--start-date', help='Start date for call logs (YYYY-MM-DD)')
     parser.add_argument('--end-date', help='End date for call logs (YYYY-MM-DD)')
+    parser.add_argument('--hours-back', type=int, help='Process calls from the last N hours')
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug logging')
     parser.add_argument('--dry-run', action='store_true',
@@ -466,40 +522,68 @@ def main():
         # Parse command line arguments
         args = parse_arguments()
         
-        # Set up logging based on debug flag
-        logger = setup_logging("missed_calls", args.debug)
+        # Set up logging
+        logger = setup_logging("missed_calls")
+        if args.debug:
+            logger.setLevel(logging.DEBUG)
         
         # Get date range for processing
-        start_date, end_date = get_date_range(args.hours_back, args.start_date, args.end_date)
+        if args.start_date and args.end_date:
+            # Convert space to 'T' in the datetime strings
+            start_date = args.start_date.replace(" ", "T")
+            end_date = args.end_date.replace(" ", "T")
+        elif args.hours_back:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(hours=args.hours_back)
+            start_date = start_date.strftime("%Y-%m-%dT%H:%M:%S")
+            end_date = end_date.strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            # Default to last 24 hours
+            end_date = datetime.now()
+            start_date = end_date - timedelta(hours=24)
+            start_date = start_date.strftime("%Y-%m-%dT%H:%M:%S")
+            end_date = end_date.strftime("%Y-%m-%dT%H:%M:%S")
+            
         logger.info(f"Processing calls from {start_date} to {end_date}")
         
         # Initialize clients
         rc_client = RingCentralClient()
         zoho_client = ZohoClient(dry_run=args.dry_run)
         
-        # Load extensions and lead owners
-        extensions = storage.load_extensions()
-        lead_owners = storage.load_lead_owners()
-        
-        if not extensions:
+        # Load configuration
+        extension_ids, extension_names = load_extensions()
+        if not extension_ids:
             logger.error("No extensions configured")
             return
             
+        lead_owners = load_lead_owners()
         if not lead_owners:
             logger.error("No lead owners configured")
             return
             
-        # Create extension mapping
-        extension_ids = {ext['id'] for ext in extensions}
-        extension_names = {ext['id']: ext['name'] for ext in extensions}
-        
-        # Process each extension
-        for extension in extensions:
-            logger.info(f"Processing calls for extension {extension['name']}")
-            call_logs = rc_client.get_call_logs(extension['id'], start_date, end_date)
-            process_missed_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, args.dry_run)
+        # Process call logs for each extension
+        all_call_logs = []
+        for extension_id in extension_ids:
+            extension_name = extension_names.get(extension_id, "Unknown")
+            logger.info(f"Processing calls for extension {extension_name}")
+            call_logs = rc_client.get_call_logs(extension_id, start_date, end_date)
+            if call_logs:
+                all_call_logs.extend(call_logs)
+         
+        # Process all the call logs and get statistics   
+        stats = process_missed_calls(all_call_logs, zoho_client, extension_ids, extension_names, lead_owners, args.dry_run)
             
         logger.info("Processing completed successfully")
+        
+        # Log a summary of results
+        if stats:
+            mode = "DRY RUN" if args.dry_run else "PRODUCTION"
+            logger.info(f"FINAL SUMMARY ({mode}):")
+            logger.info(f"  Date range: {start_date} to {end_date}")
+            logger.info(f"  Total extensions processed: {len(extension_ids)}")
+            logger.info(f"  Total calls found: {stats['total_calls']}")
+            logger.info(f"  Existing leads updated: {stats['existing_leads']}")
+            logger.info(f"  New leads created: {stats['new_leads'] if not args.dry_run else '0 (dry run)'}")
         
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
