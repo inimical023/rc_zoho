@@ -57,10 +57,12 @@ try {
 
 # Prompt for installation directory
 Write-Host "`nPlease enter the installation directory path:"
-Write-Host "Press Enter to use the default path ($env:USERPROFILE\RingCentralZoho)"
+$currentDir = (Get-Location).Path
+Write-Host "Press Enter to use the current directory ($currentDir)"
+Write-Host "Or type a different path"
 $installDir = Read-Host
 if ([string]::IsNullOrWhiteSpace($installDir)) {
-    $installDir = Join-Path $env:USERPROFILE "RingCentralZoho"
+    $installDir = $currentDir
 }
 
 # Create installation directory and logs folder first
