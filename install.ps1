@@ -212,7 +212,7 @@ function Install-Python {
 }
 
 # Create a pythonpath.txt file with the Python paths
-function Create-PythonPathFile {
+function New-PythonPathFile {
     param (
         [string]$PythonPath
     )
@@ -249,7 +249,7 @@ if (-not (Test-PythonInstallation)) {
     }
     
     # Create a file with the Python path for the batch script to use
-    Create-PythonPathFile -PythonPath $pythonInstallDir
+    New-PythonPathFile -PythonPath $pythonInstallDir
     
     # Verify Python is in PATH
     Write-Log "Verifying Python is in PATH..." -Level "INFO"
@@ -262,10 +262,10 @@ if (-not (Test-PythonInstallation)) {
     try {
         $pythonExePath = (Get-Command python).Source
         $pythonDir = Split-Path -Parent $pythonExePath
-        Create-PythonPathFile -PythonPath $pythonDir
+        New-PythonPathFile -PythonPath $pythonDir
     } catch {
         Write-Log "Could not determine Python installation directory: $_" -Level "WARNING"
-        Create-PythonPathFile -PythonPath $pythonInstallDir  # Use default as fallback
+        New-PythonPathFile -PythonPath $pythonInstallDir  # Use default as fallback
     }
 }
 
