@@ -7,7 +7,28 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 
 # Configuration
 $repoUrl = "https://raw.githubusercontent.com/inimical023/rc_zoho/main"
+$repoApiUrl = "https://api.github.com/repos/inimical023/rc_zoho"
 $requiredPythonVersion = "3.8"
+
+# Check latest commit information
+try {
+    Write-Host "`nChecking latest repository information..." -ForegroundColor Cyan
+    $repoInfo = Invoke-RestMethod -Uri $repoApiUrl
+    $commitsUrl = $repoInfo.commits_url.Replace("{/sha}", "")
+    $latestCommits = Invoke-RestMethod -Uri "$commitsUrl?per_page=1"
+    
+    if ($latestCommits.Count -gt 0) {
+        $latestCommit = $latestCommits[0]
+        $commitSha = $latestCommit.sha.Substring(0, 7)
+        $commitDate = [DateTime]$latestCommit.commit.author.date
+        $commitMsg = $latestCommit.commit.message.Split("`n")[0]
+        
+        Write-Host "Latest commit: $commitSha ($($commitDate.ToString('yyyy-MM-dd HH:mm:ss')))" -ForegroundColor Cyan
+        Write-Host "Message: $commitMsg" -ForegroundColor Cyan
+    }
+} catch {
+    Write-Host "Could not fetch repository information: $_" -ForegroundColor Yellow
+}
 
 # Get the last modified timestamp of the installation file
 try {
@@ -77,6 +98,13 @@ function Invoke-CommandWithLogging {
         Write-Log $_ -Level "INFO"
     }
     return $LASTEXITCODE
+}
+
+# Log repository information if available
+if (Get-Variable -Name latestCommit -ErrorAction SilentlyContinue) {
+    Write-Log "Repository Information:" -Level "INFO"
+    Write-Log "Latest commit: $commitSha ($($commitDate.ToString('yyyy-MM-dd HH:mm:ss')))" -Level "INFO"
+    Write-Log "Commit message: $commitMsg" -Level "INFO"
 }
 
 Write-Log "Starting RingCentral-Zoho Integration Installation"
@@ -161,6 +189,24 @@ try {
     $setupFile = Join-Path $installDir "setup_integration.bat"
     Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -OutFile $setupFile
     Write-Log "Downloaded setup_integration.bat successfully" -Level "SUCCESS"
+    
+    # Check if we're getting the latest version
+    if (Get-Variable -Name latestCommit -ErrorAction SilentlyContinue) {
+        try {
+            $setupContentUrl = "https://api.github.com/repos/inimical023/rc_zoho/contents/setup_integration.bat?ref=main"
+            $setupFileInfo = Invoke-RestMethod -Uri $setupContentUrl
+            
+            # Compare SHA
+            $latestSha = $setupFileInfo.sha
+            Write-Log "Latest file SHA from GitHub: $latestSha" -Level "INFO"
+            
+            if ($latestSha) {
+                Write-Log "You are downloading the latest version from GitHub" -Level "SUCCESS"
+            }
+        } catch {
+            Write-Log "Could not verify downloaded file against latest commit: $_" -Level "WARNING"
+        }
+    }
     
     # Log file timestamps
     try {
