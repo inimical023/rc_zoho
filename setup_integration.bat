@@ -128,11 +128,87 @@ echo import charset_normalizer >> verify_packages.py
 echo import idna >> verify_packages.py
 echo print("All core packages verified!") >> verify_packages.py
 
+:: Add security check for vulnerable versions
+echo # Security Check for Known Vulnerable Package Versions >> verify_packages.py
+echo import sys >> verify_packages.py
+echo import pkg_resources >> verify_packages.py
+echo import json >> verify_packages.py
+echo. >> verify_packages.py
+echo # Define minimum secure versions >> verify_packages.py
+echo secure_versions = { >> verify_packages.py
+echo     'cryptography': '3.4.8',  # Below this has vulnerabilities >> verify_packages.py
+echo     'urllib3': '1.26.5',      # Below this has vulnerabilities >> verify_packages.py
+echo     'requests': '2.25.1',     # Below this has vulnerabilities >> verify_packages.py
+echo     'certifi': '2021.10.8'    # Below this has vulnerabilities >> verify_packages.py
+echo } >> verify_packages.py
+echo. >> verify_packages.py
+echo # Check installed versions >> verify_packages.py
+echo vulnerable_packages = [] >> verify_packages.py
+echo update_commands = [] >> verify_packages.py
+echo for package, min_version in secure_versions.items(): >> verify_packages.py
+echo     try: >> verify_packages.py
+echo         installed_version = pkg_resources.get_distribution(package).version >> verify_packages.py
+echo         if pkg_resources.parse_version(installed_version) < pkg_resources.parse_version(min_version): >> verify_packages.py
+echo             vulnerable_packages.append(f"{package} {installed_version} (minimum recommended: {min_version})") >> verify_packages.py
+echo             update_commands.append(f"{package}>={min_version}") >> verify_packages.py
+echo     except pkg_resources.DistributionNotFound: >> verify_packages.py
+echo         pass # Package not installed >> verify_packages.py
+echo. >> verify_packages.py
+echo # Print security warnings if vulnerable packages found >> verify_packages.py
+echo if vulnerable_packages: >> verify_packages.py
+echo     print("\\n⚠️ SECURITY ALERT: Potentially vulnerable packages detected:") >> verify_packages.py
+echo     for pkg in vulnerable_packages: >> verify_packages.py
+echo         print(f"  - {pkg}") >> verify_packages.py
+echo     print("\\nGitHub Dependabot has flagged security vulnerabilities in this project.") >> verify_packages.py
+echo     print("Consider updating these packages to the recommended versions.\\n") >> verify_packages.py
+echo     # Write update commands to a file for the batch script to use >> verify_packages.py
+echo     with open('vulnerable_packages.json', 'w') as f: >> verify_packages.py
+echo         json.dump(update_commands, f) >> verify_packages.py
+echo. >> verify_packages.py
+
 python verify_packages.py >> "%log_file%" 2>&1
 if errorlevel 1 (
     call :log "Some packages may have verification issues but continuing setup..."
 ) else (
     call :log "Package verification successful"
+)
+
+:: Check if vulnerable packages were found and update them automatically
+if exist vulnerable_packages.json (
+    call :log "Vulnerable packages detected. Upgrading to secure versions..." -Level "WARNING"
+    
+    :: Create a temporary batch file to handle the upgrades
+    echo @echo off > upgrade_packages.bat
+    echo setlocal enabledelayedexpansion >> upgrade_packages.bat
+    echo for /f "usebackq delims=" %%%%a in (`type vulnerable_packages.json ^| python -c "import sys, json; packages = json.load(sys.stdin); print(' '.join(packages))"`) do ( >> upgrade_packages.bat
+    echo   set packages_to_update=%%%%a >> upgrade_packages.bat
+    echo   echo Upgrading: !packages_to_update! >> upgrade_packages.bat
+    echo   pip install --upgrade !packages_to_update! >> upgrade_packages.bat
+    echo ) >> upgrade_packages.bat
+    
+    :: Run the upgrade batch file
+    call upgrade_packages.bat >> "%log_file%" 2>&1
+    if errorlevel 1 (
+        call :log "Failed to upgrade some packages. Review logs for details." -Level "ERROR"
+    ) else (
+        call :log "Successfully upgraded packages to secure versions!" -Level "SUCCESS"
+        
+        :: Update requirements.txt with secure versions
+        call :log "Updating requirements.txt with secure versions..." -Level "INFO"
+        pip freeze > requirements.txt.new
+        move /y requirements.txt.new requirements.txt > nul
+    )
+    
+    :: Clean up
+    del upgrade_packages.bat
+    del vulnerable_packages.json
+)
+
+:: Check security warnings in log
+findstr "SECURITY ALERT" "%log_file%" > nul
+if not errorlevel 1 (
+    call :log "Security issues were detected and addressed" -Level "WARNING"
+    call :log "For more information: https://github.com/inimical023/rc_zoho/security/dependabot" -Level "INFO"
 )
 
 del verify_packages.py

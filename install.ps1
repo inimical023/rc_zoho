@@ -13,9 +13,17 @@ $requiredPythonVersion = "3.8"
 # Check latest commit information
 try {
     Write-Host "`nChecking latest repository information..." -ForegroundColor Cyan
-    $repoInfo = Invoke-RestMethod -Uri $repoApiUrl
-    $commitsUrl = $repoInfo.commits_url.Replace("{/sha}", "")
-    $latestCommits = Invoke-RestMethod -Uri "$commitsUrl?per_page=1"
+    # Use TLS 1.2 for modern web security requirements
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    
+    # Add proper user agent header to avoid GitHub API restrictions
+    $headers = @{
+        'User-Agent' = 'PowerShell-Script'
+    }
+    
+    $repoInfo = Invoke-RestMethod -Uri $repoApiUrl -Headers $headers
+    $commitsUrl = $repoInfo.commits_url -replace '{/sha}', ''
+    $latestCommits = Invoke-RestMethod -Uri "$commitsUrl`?per_page=1" -Headers $headers
     
     if ($latestCommits.Count -gt 0) {
         $latestCommit = $latestCommits[0]
@@ -32,7 +40,13 @@ try {
 
 # Get the last modified timestamp of the installation file
 try {
-    $response = Invoke-WebRequest -Uri "$repoUrl/install.ps1" -Method Head
+    # Use TLS 1.2 and proper headers
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $headers = @{
+        'User-Agent' = 'PowerShell-Script'
+    }
+    
+    $response = Invoke-WebRequest -Uri "$repoUrl/install.ps1" -Method Head -Headers $headers
     $lastModified = $response.Headers['Last-Modified']
     if ($lastModified) {
         Write-Host "`nRemote installation file last modified: $lastModified" -ForegroundColor Cyan
@@ -193,8 +207,9 @@ try {
     # Check if we're getting the latest version
     if (Get-Variable -Name latestCommit -ErrorAction SilentlyContinue) {
         try {
+            # Use the same headers and TLS settings
             $setupContentUrl = "https://api.github.com/repos/inimical023/rc_zoho/contents/setup_integration.bat?ref=main"
-            $setupFileInfo = Invoke-RestMethod -Uri $setupContentUrl
+            $setupFileInfo = Invoke-RestMethod -Uri $setupContentUrl -Headers $headers
             
             # Compare SHA
             $latestSha = $setupFileInfo.sha
@@ -224,7 +239,7 @@ try {
         
         # Get remote timestamps for comparison
         try {
-            $remoteSetupResponse = Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -Method Head
+            $remoteSetupResponse = Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -Method Head -Headers $headers
             $remoteSetupModified = $remoteSetupResponse.Headers['Last-Modified']
             if ($remoteSetupModified) {
                 Write-Log "Remote setup_integration.bat timestamp: $remoteSetupModified" -Level "INFO"
