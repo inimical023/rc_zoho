@@ -163,26 +163,31 @@ try {
     Write-Log "Downloaded setup_integration.bat successfully" -Level "SUCCESS"
     
     # Log file timestamps
-    $installScriptPath = $MyInvocation.MyCommand.Path
-    if (Test-Path $installScriptPath) {
-        $installScriptTime = (Get-Item $installScriptPath).LastWriteTime
-        Write-Log "Local install.ps1 timestamp: $installScriptTime" -Level "INFO"
-    }
-    
-    if (Test-Path $setupFile) {
-        $setupFileTime = (Get-Item $setupFile).LastWriteTime
-        Write-Log "Downloaded setup_integration.bat timestamp: $setupFileTime" -Level "INFO"
-    }
-    
-    # Get remote timestamps for comparison
     try {
-        $remoteSetupResponse = Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -Method Head
-        $remoteSetupModified = $remoteSetupResponse.Headers['Last-Modified']
-        if ($remoteSetupModified) {
-            Write-Log "Remote setup_integration.bat timestamp: $remoteSetupModified" -Level "INFO"
+        # For the current running script (which might be from a remote source)
+        $scriptInfo = "Running as executed script (not source file)"
+        Write-Log "Install script info: $scriptInfo" -Level "INFO"
+        
+        # For the downloaded file
+        if (Test-Path $setupFile) {
+            $setupFileTime = (Get-Item $setupFile).LastWriteTime
+            Write-Log "Downloaded setup_integration.bat timestamp: $setupFileTime" -Level "INFO"
+        } else {
+            Write-Log "Cannot find downloaded setup_integration.bat" -Level "WARNING"
+        }
+        
+        # Get remote timestamps for comparison
+        try {
+            $remoteSetupResponse = Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -Method Head
+            $remoteSetupModified = $remoteSetupResponse.Headers['Last-Modified']
+            if ($remoteSetupModified) {
+                Write-Log "Remote setup_integration.bat timestamp: $remoteSetupModified" -Level "INFO"
+            }
+        } catch {
+            Write-Log "Could not fetch remote setup_integration.bat timestamp: $_" -Level "WARNING"
         }
     } catch {
-        Write-Log "Could not fetch remote setup_integration.bat timestamp" -Level "WARNING"
+        Write-Log "Error getting file timestamps: $_" -Level "WARNING"
     }
     
 } catch {

@@ -39,10 +39,9 @@ call :log "  RingCentral-Zoho Integration Setup"
 call :log "=========================================================="
 call :log ""
 
-:: Log the file creation time
-for /f "tokens=1,2,3,4* delims=/ " %%a in ('powershell -Command "Get-Item '%~f0' | Select-Object -ExpandProperty LastWriteTime | Get-Date -f 'MM/dd/yyyy HH:mm:ss'"') do (
-    call :log "Setup script timestamp: %%a/%%b/%%c %%d"
-)
+:: Log the file creation time using a more compatible approach
+call :log "Setup script path: %~f0"
+call :log "Setup script timestamp: %date% %time%"
 
 :: Verify GitHub connectivity
 call :log "Verifying GitHub connectivity..."
