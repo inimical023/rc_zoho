@@ -1319,44 +1319,131 @@ class RunScriptTab(ttk.Frame):
                 cmd.append("--dry-run")
                 cmd.append("--debug")
 
-            # Run the script in the background
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            
-            # Create a new window to show progress
+            # Create the progress window first
             progress_window = tk.Toplevel(self)
             progress_window.title("Script Progress")
-            progress_window.geometry("400x200")
+            progress_window.geometry("500x250")
+            progress_window.transient(self)  # Make window modal
+            progress_window.grab_set()  # Make window modal
             
-            progress_label = ttk.Label(progress_window, text="Script is running...")
-            progress_label.pack(pady=20)
+            # Add progress label and status text widget
+            progress_label = ttk.Label(progress_window, text=f"Running {script_name}...")
+            progress_label.pack(pady=(20, 10))
+            
+            # Add a text widget to show real-time output
+            output_frame = ttk.Frame(progress_window)
+            output_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+            
+            output_text = tk.Text(output_frame, wrap=tk.WORD, height=10, width=60)
+            output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            
+            scrollbar = ttk.Scrollbar(output_frame, command=output_text.yview)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            output_text.config(yscrollcommand=scrollbar.set)
+            
+            # Add initial message
+            output_text.insert(tk.END, "Starting script execution...\n")
+            
+            # Add cancel button
+            cancel_button = ttk.Button(progress_window, text="Cancel", command=lambda: self.cancel_script(process, progress_window))
+            cancel_button.pack(pady=10)
+            
+            # Force update of the window to show it before starting the process
+            self.root.update()
+            
+            # Run the script as a subprocess with pipe for output
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            # Variable to store process output
+            output_lines = []
+            
+            def read_output():
+                """Read process output and update the text widget"""
+                for line in iter(process.stdout.readline, ''):
+                    if not line:  # Empty line means process ended
+                        break
+                    output_lines.append(line)
+                    output_text.insert(tk.END, line)
+                    output_text.see(tk.END)  # Scroll to the end
+                    self.root.update_idletasks()  # Update UI
+                process.stdout.close()
+            
+            # Start a thread to read output continuously
+            import threading
+            output_thread = threading.Thread(target=read_output)
+            output_thread.daemon = True  # Thread will close when main program exits
+            output_thread.start()
             
             def check_process():
+                """Check if the process has completed"""
                 if process.poll() is None:
-                    # Process is still running
-                    progress_window.after(1000, check_process)
+                    # Process still running, check again in 500ms
+                    progress_window.after(500, check_process)
                 else:
                     # Process has finished
-                    stdout, stderr = process.communicate()
+                    # Wait for output thread to complete
+                    output_thread.join(timeout=1.0)
                     
-                    # Write output to log file
+                    # Update UI
+                    if process.returncode == 0:
+                        output_text.insert(tk.END, "\nScript completed successfully!\n")
+                        progress_label.config(text=f"Completed: {script_name}")
+                    else:
+                        output_text.insert(tk.END, f"\nScript exited with code {process.returncode}\n")
+                        progress_label.config(text=f"Error running {script_name}")
+                    
+                    # Change cancel button to close button
+                    cancel_button.config(text="Close", command=progress_window.destroy)
+                    
+                    # Write full output to log file
                     with open(log_file, 'a') as f:
-                        if stdout:
-                            f.write(stdout.decode())
-                        if stderr:
-                            f.write(stderr.decode())
+                        f.writelines(output_lines)
                     
-                    # Close progress window
-                    progress_window.destroy()
-                    
-                    # Show completion message
-                    messagebox.showinfo("Script Complete", f"Script execution completed!\nLog file is available at: {log_file}")
+                    # Show a message without the popup window
+                    if process.returncode == 0:
+                        output_text.insert(tk.END, f"\nLog file saved to: {log_file}\n")
+                    else:
+                        output_text.insert(tk.END, f"\nCheck log file for details: {log_file}\n")
             
             # Start checking process status
-            check_process()
-
+            progress_window.after(500, check_process)
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run script: {str(e)}")
             logger.error(f"Error running script: {str(e)}")
+    
+    def cancel_script(self, process, window):
+        """Cancel a running script process"""
+        try:
+            if process and process.poll() is None:
+                # Process is still running, terminate it
+                process.terminate()
+                window.after(1000, lambda: self.force_kill_if_needed(process, window))
+            else:
+                # Process already finished, just close the window
+                window.destroy()
+        except Exception as e:
+            logger.error(f"Error canceling script: {str(e)}")
+            window.destroy()
+    
+    def force_kill_if_needed(self, process, window):
+        """Force kill the process if termination didn't work"""
+        try:
+            if process and process.poll() is None:
+                # Process still running after terminate, force kill
+                process.kill()
+                
+            # Wait a moment and close window
+            window.after(500, window.destroy)
+        except Exception as e:
+            logger.error(f"Error force killing process: {str(e)}")
+            window.destroy()
 
 class SchedulerSetupTab(ttk.Frame):
     def __init__(self, parent, storage):
