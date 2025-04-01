@@ -6,6 +6,8 @@ import subprocess
 import sys
 import pkg_resources
 from datetime import datetime, timedelta
+import base64
+import requests
 
 def check_and_install_dependencies():
     """Check and install required dependencies."""
@@ -124,17 +126,54 @@ class RingCentralClient:
             logger.error(f"Error getting RingCentral token: {str(e)}")
             raise
 
+    def _refresh_access_token(self):
+        """Refresh the OAuth access token using JWT."""
+        url = f"{self.base_url}/restapi/oauth/token"
+        # Create Basic auth header
+        auth_str = f"{self.client_id}:{self.client_secret}"
+        auth_bytes = auth_str.encode('ascii')
+        base64_auth = base64.b64encode(auth_bytes).decode('ascii')
+        
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {base64_auth}"
+        }
+        data = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": self.jwt_token
+        }
+        
+        max_retries = 3
+        backoff_factor = 2
+        delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, data=data)
+                response.raise_for_status()
+                token_data = response.json()
+                self.access_token = token_data["access_token"]
+                logger.info(f"RingCentral token refreshed successfully. Expires in {token_data.get('expires_in', 'unknown')} seconds")
+                return True
+            except Exception as e:
+                logger.warning(f"Error refreshing RingCentral token (attempt {attempt+1}/{max_retries}): {str(e)}")
+                time.sleep(delay)
+                delay *= backoff_factor
+        
+        logger.error("Failed to refresh RingCentral token after multiple attempts")
+        raise Exception("Failed to refresh RingCentral token")
+
     def get_call_logs(self, extension_id, start_date=None, end_date=None):
         """Get call logs from RingCentral API for a specific extension."""
         if not self.access_token:
-            raise Exception("No OAuth access token available")
+            self._refresh_access_token()
 
         url = f"{self.base_url}/restapi/v1.0/account/{self.account_id}/extension/{extension_id}/call-log"
         params = {
             'direction': 'Inbound',
             'type': 'Voice',
             'view': 'Detailed',
-            'withRecording': 'false',
+            'withRecording': 'true',  # Include recording info
             'showBlocked': 'true',
             'showDeleted': 'false',
             'perPage': 250  # Increased perPage limit
@@ -154,19 +193,51 @@ class RingCentralClient:
         logger.debug(f"API Request Parameters: {params}")
         logger.debug(f"API Request Headers: {headers}")
 
-        response = requests.get(url, headers=headers, params=params)
-
-        logger.debug(f"API Response Status: {response.status_code}")
-        logger.debug(f"API Raw Response: {response.text[:500]}...")
-
-        if response.status_code == 200:
-            data = response.json()
-            records = data.get('records', [])
-            return records
-        else:
-            logger.error(
-                f"Error getting call logs for extension {extension_id}: {response.status_code} - {response.text}")
-            return []
+        # Handle pagination and API rate limits
+        all_records = []
+        page = 1
+        
+        while True:
+            try:
+                params['page'] = page
+                response = requests.get(url, headers=headers, params=params)
+                
+                if response.status_code == 401:  # Unauthorized - token expired
+                    logger.warning("Access token expired, refreshing...")
+                    self._refresh_access_token()
+                    headers['Authorization'] = f'Bearer {self.access_token}'
+                    continue  # Retry with new token
+                    
+                if response.status_code == 429:  # Rate limit
+                    retry_after = int(response.headers.get('Retry-After', 10))
+                    logger.warning(f"Rate limit hit, retrying after {retry_after} seconds")
+                    time.sleep(retry_after)
+                    continue
+                    
+                response.raise_for_status()
+                data = response.json()
+                records = data.get('records', [])
+                
+                if not records:
+                    break  # No more records
+                    
+                all_records.extend(records)
+                
+                # Check if there are more pages
+                navigation = data.get('navigation', {})
+                if page >= navigation.get('totalPages', 1):
+                    break
+                    
+                page += 1
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error getting call logs for extension {extension_id}: {str(e)}")
+                if page > 1:  # Return what we've collected so far if we got something
+                    break
+                return []
+        
+        logger.info(f"Retrieved {len(all_records)} total call logs for extension {extension_id}")
+        return all_records
 
     def get_recording_content(self, recording_id):
         """Get recording content from RingCentral API with rate limiting."""
@@ -235,18 +306,35 @@ class ZohoClient:
             "grant_type": "refresh_token"
         }
         
-        try:
-            response = requests.post(url, data=data)
-            response.raise_for_status()
-            token_data = response.json()
-            self.access_token = token_data["access_token"]
-            logger.debug(f"Zoho authentication successful. Token expires in {token_data.get('expires_in', 'unknown')} seconds")
-        except Exception as e:
-            logger.error(f"Error getting Zoho token: {str(e)}")
-            raise
+        max_retries = 3
+        backoff_factor = 2
+        delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, data=data)
+                response.raise_for_status()
+                token_data = response.json()
+                self.access_token = token_data["access_token"]
+                logger.debug(f"Zoho authentication successful. Token expires in {token_data.get('expires_in', 'unknown')} seconds")
+                return True
+            except Exception as e:
+                logger.warning(f"Error refreshing Zoho token (attempt {attempt+1}/{max_retries}): {str(e)}")
+                time.sleep(delay)
+                delay *= backoff_factor
+                
+        logger.error("Failed to refresh Zoho token after multiple attempts")
+        raise Exception("Failed to refresh Zoho token")
+        
+    def _ensure_valid_token(self):
+        """Ensure we have a valid access token before making API calls."""
+        if not self.access_token:
+            self._get_access_token()
 
     def is_recording_already_attached(self, lead_id, recording_id):
         """Check if a recording is already attached to a lead in Zoho CRM."""
+        self._ensure_valid_token()
+        
         url = f"{self.base_url}/Leads/{lead_id}/Attachments"
         headers = {
             "Authorization": f"Zoho-oauthtoken {self.access_token}",
@@ -257,6 +345,11 @@ class ZohoClient:
     
         try:
             response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 401:  # Token expired
+                self._get_access_token()
+                headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                response = requests.get(url, headers=headers, params=params)
     
             if response.status_code == 200:
                 attachments = response.json().get('data', [])
@@ -274,6 +367,8 @@ class ZohoClient:
         
     def attach_recording_to_lead(self, call, lead_id, rc_client, call_time):
         """Attach a recording to a lead in Zoho CRM, or add a note if no recording exists."""
+        self._ensure_valid_token()
+        
         if 'recording' in call and call['recording'] and 'id' in call['recording']:
             recording_id = call['recording']['id']
             logger.info(f"Checking if recording {recording_id} is already attached to lead {lead_id}")
@@ -296,8 +391,17 @@ class ZohoClient:
                 headers = {
                     "Authorization": f"Zoho-oauthtoken {self.access_token}",
                 }
+                
+                # Determine file extension based on content type
+                if content_type == "audio/mpeg":
+                    extension = "mp3"
+                elif content_type == "audio/wav":
+                    extension = "wav"
+                else:
+                    extension = content_type.split('/')[1] if '/' in content_type else "bin"
+                
                 # Create the filename with the formatted call time
-                filename = f"{formatted_call_time}_recording_{recording_id}.{content_type.split('/')[1]}"
+                filename = f"{formatted_call_time}_recording_{recording_id}.{extension}"
                 files = {
                     # Set filename and content type
                     'file': (filename, recording_content, content_type)
@@ -305,33 +409,41 @@ class ZohoClient:
     
                 try:
                     response = requests.post(url, headers=headers, files=files)
+                    
+                    if response.status_code == 401:  # Token expired
+                        self._get_access_token()
+                        headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                        response = requests.post(url, headers=headers, files=files)
     
                     if response.status_code in [200, 201, 202]:
                         logger.info(f"Successfully attached recording {recording_id} to lead {lead_id}")
+                        return True
                     else:
                         logger.error(
                             f"Error attaching recording {recording_id} to lead {lead_id}. Status code: {response.status_code}, Response: {response.text}")
                         # Add a note about the failed recording attachment
                         self.add_note_to_lead(lead_id, f"Failed to attach recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')}. Error: {response.status_code}")
+                        return False
     
                 except Exception as e:
                     logger.error(f"Exception attaching recording {recording_id} to lead {lead_id}: {e}")
                     # Add a note about the failed recording attachment
                     self.add_note_to_lead(lead_id, f"Failed to attach recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')}. Error: {str(e)}")
+                    return False
             else:
                 logger.warning(f"Could not retrieve recording content for recording ID: {recording_id}")
                 # Add a note about the unavailable recording content
                 self.add_note_to_lead(lead_id, f"Recording {recording_id} at {call_time.strftime('%Y-%m-%d %H:%M:%S')} could not be retrieved.")
+                return False
         else:
             logger.info("No recording ID found for this call.")
             # Add a note that no recording was available for this call
             self.add_note_to_lead(lead_id, f"No recording was available for call at {call_time.strftime('%Y-%m-%d %H:%M:%S')}.")
+            return True
 
     def create_zoho_lead(self, lead_data):
         """Create a new lead in Zoho CRM."""
-        if not self.access_token:
-            logger.error("No access token available")
-            return None
+        self._ensure_valid_token()
 
         url = f"{self.base_url}/Leads"
         headers = {
@@ -339,12 +451,35 @@ class ZohoClient:
             "Content-Type": "application/json"
         }
 
+        # Log what we're about to send
+        logger.debug(f"Creating lead with data: {lead_data}")
+        
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would have created lead with data: {lead_data}")
+            return "dry_run_lead_id"
+
         try:
             response = requests.post(url, headers=headers, json=lead_data)
+            
+            if response.status_code == 401:  # Token expired
+                self._get_access_token()
+                headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                response = requests.post(url, headers=headers, json=lead_data)
+                
             if response.status_code == 201:
                 data = response.json()
-                if data and data['data']:
-                    lead_id = data['data'][0]['id']
+                logger.debug(f"Lead creation response: {data}")
+                
+                if data and 'data' in data and data['data']:
+                    # Check both possible structures
+                    if 'details' in data['data'][0] and 'id' in data['data'][0]['details']:
+                        lead_id = data['data'][0]['details']['id']
+                    elif 'id' in data['data'][0]:
+                        lead_id = data['data'][0]['id']
+                    else:
+                        logger.error("Could not find lead ID in response")
+                        return None
+                        
                     logger.info(f"Successfully created lead {lead_id}")
                     return lead_id
                 else:
@@ -359,9 +494,7 @@ class ZohoClient:
 
     def search_records(self, module, criteria):
         """Search for records in Zoho CRM."""
-        if not self.access_token:
-            logger.error("No access token available")
-            return None
+        self._ensure_valid_token()
 
         url = f"{self.base_url}/{module}/search"
         headers = {
@@ -374,12 +507,18 @@ class ZohoClient:
 
         try:
             response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 401:  # Token expired
+                self._get_access_token()
+                headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                response = requests.get(url, headers=headers, params=params)
+                
             if response.status_code == 200:
                 data = response.json()
-                if data and data['data']:
+                if data and 'data' in data and data['data']:
                     return data['data']
                 else:
-                    logger.warning(f"No records found matching criteria: {criteria}")
+                    logger.info(f"No records found matching criteria: {criteria}")
                     return None
             elif response.status_code == 204:
                 # 204 means No Content - successful request but no matching records
@@ -392,21 +531,64 @@ class ZohoClient:
             logger.error(f"Exception searching records: {e}")
             return None
 
-    def add_note_to_lead(self, lead_id, note_content):
-        """Add a note to a lead in Zoho CRM."""
-        access_token = self.access_token
-        if not access_token:
-            logger.error("No access token provided for adding note")
-            return None
-
-        logger.info(f"Adding note to lead {lead_id}")
-
-        # Set up the request
-        url = f"https://www.zohoapis.com/crm/v7/Leads/{lead_id}/Notes"
+    def update_lead_status(self, lead_id, status):
+        """Update a lead's status in Zoho CRM."""
+        self._ensure_valid_token()
+        
+        url = f"{self.base_url}/Leads"
         headers = {
-            "Authorization": f"Zoho-oauthtoken {access_token}",
+            "Authorization": f"Zoho-oauthtoken {self.access_token}",
             "Content-Type": "application/json"
         }
+        data = {
+            "data": [
+                {
+                    "id": lead_id,
+                    "Lead_Status": status
+                }
+            ]
+        }
+        
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would update lead {lead_id} status to '{status}'")
+            return True
+            
+        try:
+            response = requests.put(url, headers=headers, json=data)
+            
+            if response.status_code == 401:  # Token expired
+                self._get_access_token()
+                headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                response = requests.put(url, headers=headers, json=data)
+                
+            if response.status_code in [200, 202]:
+                logger.info(f"Successfully updated lead {lead_id} status to '{status}'")
+                return True
+            else:
+                logger.error(f"Error updating lead status: {response.status_code} - {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Exception updating lead status: {str(e)}")
+            return False
+
+    def add_note_to_lead(self, lead_id, note_content):
+        """Add a note to a lead in Zoho CRM."""
+        self._ensure_valid_token()
+        
+        if not lead_id:
+            logger.error("Cannot add note: No lead ID provided")
+            return False
+            
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would add note to lead {lead_id}: {note_content}")
+            return True
+
+        url = f"{self.base_url}/Leads/{lead_id}/Notes"
+        headers = {
+            "Authorization": f"Zoho-oauthtoken {self.access_token}",
+            "Content-Type": "application/json"
+        }
+        
         data = {
             "data": [
                 {
@@ -415,82 +597,183 @@ class ZohoClient:
                 }
             ]
         }
-
+        
         try:
             response = requests.post(url, headers=headers, json=data)
-            if response.status_code == 201:
+            
+            if response.status_code == 401:  # Token expired
+                self._get_access_token()
+                headers = {"Authorization": f"Zoho-oauthtoken {self.access_token}"}
+                response = requests.post(url, headers=headers, json=data)
+            
+            if response.status_code in [200, 201, 202]:
                 logger.info(f"Successfully added note to lead {lead_id}")
-                return response.json()
+                return True
             else:
-                logger.error(f"Error adding note to lead {lead_id}: {response.status_code} - {response.text}")
-                return None
+                logger.error(f"Error adding note to lead {lead_id}. Status code: {response.status_code}, Response: {response.text}")
+                
+                # Try a simplified note if it fails
+                if len(note_content) > 1000:
+                    simplified_note = note_content[:997] + "..."
+                    logger.info(f"Retrying with simplified note")
+                    return self.add_note_to_lead(lead_id, simplified_note)
+                return False
+                
         except Exception as e:
             logger.error(f"Exception adding note to lead {lead_id}: {e}")
-            return None
+            return False
 
-    def create_or_update_lead(self, call, lead_owner, extension_names):
-        """Create or update a lead in Zoho CRM."""
+    def create_or_update_lead(self, call, lead_owner, extension_names, rc_client):
+        """Create or update a lead in Zoho CRM based on call information."""
+        self._ensure_valid_token()
+        
         # Check if call has the required structure
         if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
-            logger.warning(f"Call is missing phone number data, skipping: {call.get('id')}")
-            return
+            logger.warning(f"Call {call.get('id')} is missing phone number data, skipping")
+            return None
             
         phone_number = call['from']['phoneNumber']
         extension_id = call['to'].get('extensionId')
         lead_source = extension_names.get(str(extension_id), "Unknown")
         lead_status = "Accepted Call"  # Set Lead Status to "Accepted Call"
-        first_name = "Unknown Caller"
-        last_name = "Unknown Caller"
-
-        existing_lead = self.search_records("Leads", f"Phone:equals:{phone_number}")
+        first_name = "Unknown"
+        last_name = "Caller"
 
         # Extract call receive time from RingCentral API
-        call_receive_time = call.get('startTime')
-        if call_receive_time:
-            try:
-                # Convert the time to the desired format
-                call_time = datetime.fromisoformat(call_receive_time.replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M:%S")
-            except ValueError as e:
-                logger.error(f"Error parsing startTime: {e}. Using current time.")
-                call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            logger.warning("Call start time not found. Using current time.")
+        call_time = None
+        try:
+            call_time = datetime.fromisoformat(call.get('startTime', '').replace('Z', '+00:00'))
+            formatted_time = call_time.strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            call_time = datetime.now()
+            formatted_time = call_time.strftime("%Y-%m-%d %H:%M:%S")
+            logger.warning(f"Could not parse call time for call {call.get('id')}, using current time")
+
+        # Prepare detailed call information for notes
+        call_details = []
+        call_details.append(f"Call time: {formatted_time}")
+        call_details.append(f"Call direction: {call.get('direction', 'Unknown')}")
+        call_details.append(f"Call duration: {call.get('duration', 'Unknown')} seconds")
+        call_details.append(f"Caller number: {phone_number}")
+        call_details.append(f"Called extension: {extension_names.get(str(extension_id), extension_id)}")
+        call_details.append(f"Call result: {call.get('result', 'Unknown')}")
+        call_details.append(f"Call ID: {call.get('id', 'Unknown')}")
+        
+        # Format note content with detailed information
+        note_content = "\n".join([
+            f"Accepted call received on {formatted_time}",
+            "---",
+            *call_details,
+            "---",
+            f"Lead owner: {lead_owner.get('name', 'Unknown') if lead_owner else 'Unknown'}"
+        ])
+
+        # Search for an existing lead by phone number
+        existing_lead = self.search_records("Leads", f"Phone:equals:{phone_number}")
 
         if existing_lead:
+            # Update the existing lead
             lead_id = existing_lead[0]['id']
-            logger.info(f"Existing lead found {lead_id} for {phone_number}. Adding a note.")
-            note_content = f"Accepted call received on {call_time}."
+            logger.info(f"Found existing lead {lead_id} for phone number {phone_number}")
+            
+            # Update lead status to "Accepted Call"
+            self.update_lead_status(lead_id, lead_status)
+            
+            # Add detailed note about this accepted call
             self.add_note_to_lead(lead_id, note_content)
+            
+            # Attach recording to the existing lead if one exists
+            if not self.dry_run:
+                self.attach_recording_to_lead(call, lead_id, rc_client, call_time)
+                
             return lead_id
+            
         else:
-            # Use the lead_owner['id'] directly from lead_owners.json
-            lead_owner_id = lead_owner['id']
-            data = {
+            # Create a new lead
+            logger.info(f"No existing lead found for phone number {phone_number}. Creating a new lead.")
+            
+            # Prepare lead data with correct field names and format
+            lead_data = {
                 "data": [
                     {
+                        "First_Name": first_name,
+                        "Last_Name": last_name,
                         "Phone": phone_number,
-                        "Owner": {"id": lead_owner_id},
                         "Lead_Source": lead_source,
                         "Lead_Status": lead_status,
-                        "First_Name": first_name,
-                        "Last_Name": last_name
+                        "Description": f"Lead created from accepted call received on {formatted_time}"
                     }
                 ]
             }
-            logger.debug(f"Creating lead data: {data}")
-            if self.dry_run:
-                logger.info(f"[DRY-RUN] Would have created lead with data: {data}")
-                return None
+            
+            # Add owner if available
+            if lead_owner and lead_owner.get('id'):
+                lead_data['data'][0]['Owner'] = {"id": lead_owner.get('id')}
+                
+            # Create the lead
+            lead_id = self.create_zoho_lead(lead_data)
+            
+            if lead_id:
+                # Add detailed creation note
+                creation_note = f"New lead created from accepted call on {formatted_time}.\n\n{note_content}"
+                self.add_note_to_lead(lead_id, creation_note)
+                
+                # Attach recording if one exists
+                if not self.dry_run:
+                    self.attach_recording_to_lead(call, lead_id, rc_client, call_time)
+                    
+                return lead_id
             else:
-                lead_id = self.create_zoho_lead(data)
-                if lead_id:
-                    # Add note for new lead creation
-                    note_content = f"New lead created from accepted call received on {call_time}."
-                    self.add_note_to_lead(lead_id, note_content)
-                    logger.info(f"Added creation note to new lead {lead_id}")
-                    return lead_id
+                logger.error(f"Failed to create lead for call {call.get('id')}")
                 return None
+
+def get_date_range(hours_back=None, start_date=None, end_date=None):
+    """Get date range based on input parameters."""
+    if start_date and end_date:
+        # Convert space to 'T' in the datetime strings if needed
+        start_date = start_date.replace(" ", "T") if " " in start_date else start_date
+        end_date = end_date.replace(" ", "T") if " " in end_date else end_date
+        return start_date, end_date
+    elif hours_back:
+        end_date = datetime.now()
+        start_date = end_date - timedelta(hours=hours_back)
+        return start_date.strftime("%Y-%m-%dT%H:%M:%S"), end_date.strftime("%Y-%m-%dT%H:%M:%S")
+    else:
+        # Default to last 24 hours
+        end_date = datetime.now()
+        start_date = end_date - timedelta(hours=24)
+        return start_date.strftime("%Y-%m-%dT%H:%M:%S"), end_date.strftime("%Y-%m-%dT%H:%M:%S")
+
+def qualify_call(call, extension_names, lead_owners):
+    """Qualify a call based on certain criteria."""
+    # Check if the call has any legs
+    if 'legs' not in call or not call['legs']:
+        return False, {'reason': 'No call legs found'}
+
+    # Iterate through the legs to find an 'Accepted' result and a lead owner name
+    for leg in call['legs']:
+        leg_result = leg.get('result')
+        if leg_result == 'Accepted':
+            # Get the 'to' name from the leg
+            leg_to_name = leg['to'].get('name')
+            leg_to_extension_id = leg['to'].get('extensionId')
+
+            # Check if the 'to' name matches a lead owner's name
+            if leg_to_name:
+                # Find the lead owner by name
+                lead_owner = next(
+                    (owner for owner in lead_owners if owner['name'] == leg_to_name), None)
+                if lead_owner:
+                    return True, {'details': {'lead_owner': lead_owner}}
+                else:
+                    logger.info(f"Call ID {call.get('id')}, Leg to.name: {leg_to_name}")
+            elif leg_to_extension_id:
+                extension_name = extension_names.get(str(leg_to_extension_id))
+                return True, {'details': {'extension_name': extension_name}}
+            else:
+                return False, {'reason': 'No lead owner found for accepted call'}
+
+    return False, {'reason': 'No leg with \'Accepted\' result and a lead owner name'}
 
 def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, rc_client, dry_run=False):
     """Process accepted calls and create leads in Zoho CRM."""
@@ -501,6 +784,7 @@ def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_name
     # Initialize statistics
     stats = {
         'total_calls': len(call_logs),
+        'qualified_calls': 0,
         'processed_calls': 0,
         'existing_leads': 0,
         'new_leads': 0,
@@ -513,68 +797,75 @@ def process_accepted_calls(call_logs, zoho_client, extension_ids, extension_name
     lead_owner_cycle = itertools.cycle(lead_owners)
     
     for call in call_logs:
-        # Skip calls that don't have the required data
-        if not call.get('from') or not call.get('to'):
-            logger.warning(f"Skipping call {call.get('id')} - missing required data")
+        # Skip invalid calls
+        if not call.get('from') or not call.get('from', {}).get('phoneNumber'):
+            logger.warning(f"Call has invalid structure, skipping: {call.get('id')}")
             stats['skipped_calls'] += 1
             continue
             
-        # Get the extension ID from the call
-        extension_id = call['to'].get('extensionId')
-        if not extension_id or str(extension_id) not in extension_ids:
-            logger.warning(f"Skipping call {call.get('id')} - extension {extension_id} not in configured extensions")
-            stats['skipped_calls'] += 1
-            continue
-
-        # Get the caller's phone number
-        phone_number = call['from']['phoneNumber']
-            
-        # Get the next lead owner in the round-robin cycle
-        lead_owner = next(lead_owner_cycle)
-
-        # Check if this is an existing lead
-        existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{phone_number}")
-        if existing_lead:
-            stats['existing_leads'] += 1
-        else:
-            stats['new_leads'] += 1
+        # Qualify the call
+        is_qualified, decision_data = qualify_call(call, extension_names, lead_owners)
         
-        # Create or update the lead in Zoho CRM
-        lead_id = zoho_client.create_or_update_lead(call, lead_owner, extension_names)
-        stats['processed_calls'] += 1
+        if is_qualified:
+            stats['qualified_calls'] += 1
+            
+            # Extract lead owner information
+            if 'lead_owner' in decision_data.get('details', {}):
+                lead_owner_name = decision_data['details']['lead_owner']['name']
+                lead_owner_id = decision_data['details']['lead_owner']['id']
+                lead_owner = decision_data['details']['lead_owner']
+            elif 'extension_name' in decision_data.get('details', {}):
+                lead_owner_name = decision_data['details']['extension_name']
+                lead_owner_id = None  # No lead owner ID in this case
+                lead_owner = next(lead_owner_cycle)  # Use next owner in round-robin cycle
+            else:
+                logger.warning(f"No lead owner information found for call {call.get('id')}")
+                lead_owner = next(lead_owner_cycle)  # Use next owner in round-robin cycle
+                lead_owner_name = lead_owner.get('name', 'Unknown')
 
-        # Track recording statistics if the call has a recording
-        if lead_id and 'recording' in call and call['recording'] and 'id' in call['recording']:
-            try:
-                # Extract call receive time for the filename
-                call_receive_time = call.get('startTime')
-                if call_receive_time:
-                    try:
-                        call_time = datetime.fromisoformat(call_receive_time.replace('Z', '+00:00'))
-                    except ValueError:
-                        call_time = datetime.now()
-                else:
-                    call_time = datetime.now()
-                    
-                recording_id = call['recording']['id']
-                if not dry_run:
-                    zoho_client.attach_recording_to_lead(call, lead_id, rc_client, call_time)
-                    stats['recordings_attached'] += 1
-                else:
-                    logger.info(f"[DRY-RUN] Would have attached recording {recording_id} to lead {lead_id}")
-            except Exception as e:
-                logger.error(f"Error attaching recording: {str(e)}")
-                stats['recording_failures'] += 1
-
+            # Check if call has recording
+            has_recording = bool('recording' in call and call['recording'] and 'id' in call['recording'])
+            
+            # Create or update lead in Zoho
+            phone_number = call['from']['phoneNumber']
+            existing_lead = zoho_client.search_records("Leads", f"Phone:equals:{phone_number}")
+            
+            if existing_lead:
+                stats['existing_leads'] += 1
+            else:
+                stats['new_leads'] += 1
+                
+            lead_id = zoho_client.create_or_update_lead(call, lead_owner, extension_names, rc_client)
+            
+            if lead_id:
+                stats['processed_calls'] += 1
+                logger.info(f"Processed call {call.get('id')} - Lead Owner: {lead_owner_name}, Lead ID: {lead_id}")
+                
+                # Track recording statistics
+                if has_recording:
+                    if not dry_run and call.get('recording', {}).get('id'):
+                        # Statistics will be updated inside the create_or_update_lead method
+                        stats['recordings_attached'] += 1
+            else:
+                logger.warning(f"Failed to process call {call.get('id')}")
+                stats['skipped_calls'] += 1
+        else:
+            reason = decision_data.get('reason', 'Unknown reason')
+            logger.info(f"Skipped call {call.get('id')} - Not qualified: {reason}")
+            stats['skipped_calls'] += 1
+            
+        # Add a small delay between processing calls to respect rate limits
+        time.sleep(0.5)
+    
     # Log statistics
     logger.info(f"Call Processing Summary:")
     logger.info(f"  Total calls found: {stats['total_calls']}")
+    logger.info(f"  Calls qualified as 'accepted': {stats['qualified_calls']}")
     logger.info(f"  Calls processed: {stats['processed_calls']}")
     logger.info(f"  Existing leads updated: {stats['existing_leads']}")
     logger.info(f"  New leads created: {stats['new_leads'] if not dry_run else '0 (dry run)'}")
     logger.info(f"  Calls skipped: {stats['skipped_calls']}")
-    logger.info(f"  Recordings attached: {stats['recordings_attached']}")
-    logger.info(f"  Recording failures: {stats['recording_failures']}")
+    logger.info(f"  Recordings attached: {stats['recordings_attached'] if not dry_run else '0 (dry run)'}")
 
     return stats
 
@@ -605,23 +896,6 @@ def parse_arguments():
     
     return parser.parse_args()
 
-def get_date_range(hours_back=None, start_date=None, end_date=None):
-    """Get date range based on input parameters."""
-    if start_date and end_date:
-        # Convert space to 'T' in the datetime strings if needed
-        start_date = start_date.replace(" ", "T") if " " in start_date else start_date
-        end_date = end_date.replace(" ", "T") if " " in end_date else end_date
-        return start_date, end_date
-    elif hours_back:
-        end_date = datetime.now()
-        start_date = end_date - timedelta(hours=hours_back)
-        return start_date.strftime("%Y-%m-%dT%H:%M:%S"), end_date.strftime("%Y-%m-%dT%H:%M:%S")
-    else:
-        # Default to last 24 hours
-        end_date = datetime.now()
-        start_date = end_date - timedelta(hours=24)
-        return start_date.strftime("%Y-%m-%dT%H:%M:%S"), end_date.strftime("%Y-%m-%dT%H:%M:%S")
-
 def main():
     """Main function"""
     # Set up a default logger in case of early failure
@@ -637,13 +911,40 @@ def main():
         else:
             logger.setLevel(logging.INFO)
         
+        # Override log file location if provided
+        if args.log_file:
+            for handler in logger.handlers[:]:
+                if isinstance(handler, logging.FileHandler):
+                    logger.removeHandler(handler)
+            file_handler = logging.FileHandler(args.log_file)
+            file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+            logger.addHandler(file_handler)
+            logger.info(f"Logging to custom log file: {args.log_file}")
+            
+        # Display script mode and version
+        mode = "DRY RUN" if args.dry_run else "PRODUCTION"
+        logger.info(f"Starting accepted calls processing in {mode} mode")
+        logger.info(f"AcceptedCalls.py - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
         # Get date range for processing
         start_date, end_date = get_date_range(args.hours_back, args.start_date, args.end_date)
         logger.info(f"Processing calls from {start_date} to {end_date}")
         
         # Initialize clients
-        rc_client = RingCentralClient()
-        zoho_client = ZohoClient(dry_run=args.dry_run)
+        logger.info("Initializing API clients...")
+        try:
+            rc_client = RingCentralClient()
+            logger.info("RingCentral client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize RingCentral client: {str(e)}")
+            return 1
+            
+        try:
+            zoho_client = ZohoClient(dry_run=args.dry_run)
+            logger.info("Zoho client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Zoho client: {str(e)}")
+            return 1
         
         # Load extensions and lead owners
         extensions = storage.load_extensions()
@@ -651,11 +952,11 @@ def main():
         
         if not extensions:
             logger.error("No extensions configured")
-            return
+            return 1
             
         if not lead_owners:
             logger.error("No lead owners configured")
-            return
+            return 1
             
         # Create extension mapping
         extension_ids = {str(ext['id']) for ext in extensions}
@@ -664,6 +965,7 @@ def main():
         # Initialize overall statistics
         overall_stats = {
             'total_calls': 0,
+            'qualified_calls': 0,
             'processed_calls': 0,
             'existing_leads': 0,
             'new_leads': 0,
@@ -673,36 +975,58 @@ def main():
         }
         
         # Process each extension
+        logger.info(f"Processing calls for {len(extensions)} extensions")
+        all_call_logs = []
+        
         for extension in extensions:
-            logger.info(f"Processing calls for extension {extension['name']}")
-            call_logs = rc_client.get_call_logs(extension['id'], start_date, end_date)
-            stats = process_accepted_calls(call_logs, zoho_client, extension_ids, extension_names, lead_owners, rc_client, args.dry_run)
+            ext_id = extension['id']
+            ext_name = extension['name']
+            logger.info(f"Getting call logs for extension {ext_name} (ID: {ext_id})")
             
-            # Aggregate statistics
-            if stats:
-                for key in overall_stats:
-                    overall_stats[key] += stats.get(key, 0)
-            
+            try:
+                call_logs = rc_client.get_call_logs(ext_id, start_date, end_date)
+                if call_logs:
+                    all_call_logs.extend(call_logs)
+                    logger.info(f"Retrieved {len(call_logs)} call logs for extension {ext_name}")
+                else:
+                    logger.info(f"No call logs found for extension {ext_name}")
+            except Exception as e:
+                logger.error(f"Error getting call logs for extension {ext_name}: {str(e)}")
+                continue
+        
+        # Process all the call logs together
+        logger.info(f"Processing {len(all_call_logs)} total call logs")
+        stats = process_accepted_calls(all_call_logs, zoho_client, extension_ids, extension_names, lead_owners, rc_client, args.dry_run)
+        
+        # Combine statistics
+        if stats:
+            for key in overall_stats:
+                if key in stats:
+                    overall_stats[key] = stats[key]
+        
         # Log final summary
-        mode = "DRY RUN" if args.dry_run else "PRODUCTION"
         logger.info(f"FINAL SUMMARY ({mode}):")
         logger.info(f"  Date range: {start_date} to {end_date}")
         logger.info(f"  Total extensions processed: {len(extensions)}")
         logger.info(f"  Total calls found: {overall_stats['total_calls']}")
+        logger.info(f"  Calls qualified as 'accepted': {overall_stats['qualified_calls']}")
         logger.info(f"  Total calls processed: {overall_stats['processed_calls']}")
         logger.info(f"  Existing leads updated: {overall_stats['existing_leads']}")
         logger.info(f"  New leads created: {overall_stats['new_leads'] if not args.dry_run else '0 (dry run)'}")
         logger.info(f"  Calls skipped: {overall_stats['skipped_calls']}")
-        logger.info(f"  Recordings attached: {overall_stats['recordings_attached']}")
-        logger.info(f"  Recording failures: {overall_stats['recording_failures']}")
+        logger.info(f"  Recordings attached: {overall_stats['recordings_attached'] if not args.dry_run else '0 (dry run)'}")
         
+        logger.info(f"AcceptedCalls.py - Completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("Processing completed successfully")
+        
+        return 0
         
     except Exception as e:
         # Use the logger if it was created, otherwise use the default logger
         log = logger if 'logger' in locals() else default_logger
         log.error(f"Error in main: {str(e)}")
-        raise
+        log.debug("Stack trace:", exc_info=True)
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
