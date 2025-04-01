@@ -1,25 +1,38 @@
 @echo off
 setlocal enabledelayedexpansion
 
-echo ==========================================================
-echo  RingCentral-Zoho Integration Setup
-echo ==========================================================
-echo.
+:: Create logs directory if it doesn't exist
+if not exist logs mkdir logs
+
+:: Set up logging
+set "log_file=logs\setup_integration_%date:~-4,4%%date:~-10,2%%date:~-7,2%_%time:~0,2%%time:~3,2%%time:~6,2%.log"
+
+:: Function to log and display messages
+:log
+echo %~1 >> "%log_file%"
+echo %~1
+goto :eof
+
+:: Start logging
+call :log "=========================================================="
+call :log "  RingCentral-Zoho Integration Setup"
+call :log "=========================================================="
+call :log ""
 
 :: Check if Python is installed
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo Python is not installed. Please install Python 3.8 or later.
+    call :log "Python is not installed. Please install Python 3.8 or later."
     pause
     exit /b 1
 )
 
 :: Create virtual environment if it doesn't exist
 if not exist .venv (
-    echo Creating virtual environment...
-    python -m venv .venv
+    call :log "Creating virtual environment..."
+    python -m venv .venv >> "%log_file%" 2>&1
     if errorlevel 1 (
-        echo Failed to create virtual environment.
+        call :log "Failed to create virtual environment."
         pause
         exit /b 1
     )
@@ -28,95 +41,93 @@ if not exist .venv (
 :: Activate virtual environment
 call .venv\Scripts\activate.bat
 if errorlevel 1 (
-    echo Failed to activate virtual environment.
+    call :log "Failed to activate virtual environment."
     pause
     exit /b 1
 )
 
 :: Install required packages
-echo Installing required packages...
-python -m pip install --upgrade pip
-python -m pip install "setuptools>=40.0.0"
-pip install -r requirements.txt
+call :log "Installing required packages..."
+python -m pip install --upgrade pip >> "%log_file%" 2>&1
+python -m pip install "setuptools>=40.0.0" >> "%log_file%" 2>&1
+python -m pip install "tkcalendar>=2.1.1" >> "%log_file%" 2>&1
+pip install -r requirements.txt >> "%log_file%" 2>&1
 
 :: Verify package installation
-echo Verifying package installation...
-python -c "import sys; missing = []; packages = ['setuptools', 'cryptography', 'dotenv', 'requests', 'dateutil', 'pytz', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'win32api', 'ringcentral', 'tkinter', 'tkcalendar']; [missing.append(pkg) for pkg in packages if pkg not in sys.modules and not __import__(pkg, fromlist=['']) in (1,)]; print('Missing packages: ' + ', '.join(missing) if missing else 'All required packages installed successfully!')"
+call :log "Verifying package installation..."
+python -c "import sys; missing = []; packages = ['setuptools', 'cryptography', 'dotenv', 'requests', 'dateutil', 'pytz', 'urllib3', 'certifi', 'charset_normalizer', 'idna', 'win32api', 'ringcentral', 'tkinter', 'tkcalendar']; [missing.append(pkg) for pkg in packages if pkg not in sys.modules and not __import__(pkg, fromlist=['']) in (1,)]; print('Missing packages: ' + ', '.join(missing) if missing else 'All required packages installed successfully!')" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Some packages failed to install, but continuing setup process.
+    call :log "Some packages failed to install, but continuing setup process."
 )
 
 :: Create data directory if it doesn't exist
 if not exist data mkdir data
 
-:: Create logs directory if it doesn't exist
-if not exist logs mkdir logs
-
 :: Download scripts from GitHub
-echo Downloading scripts from GitHub...
+call :log "Downloading scripts from GitHub..."
 
 :: Set GitHub repository URL and branch
 set GITHUB_REPO=https://raw.githubusercontent.com/inimical023/rc_zoho/main
 
 :: Download all necessary files
-echo Downloading common.py...
-curl -o common.py "%GITHUB_REPO%/common.py"
+call :log "Downloading common.py..."
+curl -o common.py "%GITHUB_REPO%/common.py" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Failed to download common.py
+    call :log "Failed to download common.py"
     pause
     exit /b 1
 )
 
-echo Downloading accepted_calls.py...
-curl -o accepted_calls.py "%GITHUB_REPO%/accepted_calls.py"
+call :log "Downloading accepted_calls.py..."
+curl -o accepted_calls.py "%GITHUB_REPO%/accepted_calls.py" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Failed to download accepted_calls.py
+    call :log "Failed to download accepted_calls.py"
     pause
     exit /b 1
 )
 
-echo Downloading missed_calls.py...
-curl -o missed_calls.py "%GITHUB_REPO%/missed_calls.py"
+call :log "Downloading missed_calls.py..."
+curl -o missed_calls.py "%GITHUB_REPO%/missed_calls.py" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Failed to download missed_calls.py
+    call :log "Failed to download missed_calls.py"
     pause
     exit /b 1
 )
 
-echo Downloading secure_credentials.py...
-curl -o secure_credentials.py "%GITHUB_REPO%/secure_credentials.py"
+call :log "Downloading secure_credentials.py..."
+curl -o secure_credentials.py "%GITHUB_REPO%/secure_credentials.py" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Failed to download secure_credentials.py
+    call :log "Failed to download secure_credentials.py"
     pause
     exit /b 1
 )
 
-echo Downloading unified_admin.py...
-curl -o unified_admin.py "%GITHUB_REPO%/unified_admin.py"
+call :log "Downloading unified_admin.py..."
+curl -o unified_admin.py "%GITHUB_REPO%/unified_admin.py" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Failed to download unified_admin.py
+    call :log "Failed to download unified_admin.py"
     pause
     exit /b 1
 )
 
-echo Downloading requirements.txt...
-curl -o requirements.txt "%GITHUB_REPO%/requirements.txt"
+call :log "Downloading requirements.txt..."
+curl -o requirements.txt "%GITHUB_REPO%/requirements.txt" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Failed to download requirements.txt
+    call :log "Failed to download requirements.txt"
     pause
     exit /b 1
 )
 
-echo Downloading README.md...
-curl -o README.md "%GITHUB_REPO%/README.md"
+call :log "Downloading README.md..."
+curl -o README.md "%GITHUB_REPO%/README.md" >> "%log_file%" 2>&1
 if errorlevel 1 (
-    echo Failed to download README.md
+    call :log "Failed to download README.md"
     pause
     exit /b 1
 )
 
 :: Create launch_admin.bat
-echo Creating launch_admin.bat...
+call :log "Creating launch_admin.bat..."
 (
     echo @echo off
     echo call .venv\Scripts\activate.bat
@@ -124,7 +135,7 @@ echo Creating launch_admin.bat...
 ) > launch_admin.bat
 
 :: Create install.ps1
-echo Creating install.ps1...
+call :log "Creating install.ps1..."
 (
     echo # PowerShell installation script for RingCentral-Zoho Integration
     echo # This script is created during setup_integration.bat execution
@@ -137,7 +148,7 @@ echo Creating install.ps1...
 ) > install.ps1
 
 :: Create GUI version of setup_credentials.py
-echo Creating setup_credentials.py with GUI...
+call :log "Creating setup_credentials.py with GUI..."
 (
     echo import argparse
     echo import logging
@@ -354,7 +365,7 @@ echo Creating setup_credentials.py with GUI...
 ) > setup_credentials.py
 
 :: Create launcher scripts
-echo Creating launcher scripts...
+call :log "Creating launcher scripts..."
 (
     echo @echo off
     echo call .venv\Scripts\activate.bat
@@ -374,7 +385,7 @@ echo Creating launcher scripts...
 ) > run_missed_calls.bat
 
 :: Create the new run_script_date.bat with GUI
-echo Creating run_script_date.bat...
+call :log "Creating run_script_date.bat..."
 (
     echo @echo off
     echo setlocal enabledelayedexpansion
@@ -555,25 +566,27 @@ echo Creating run_script_date.bat...
     echo pause
 ) > run_script_date.bat
 
-echo.
-echo ==========================================================
-echo  Setup Complete!
-echo ==========================================================
-echo.
-echo The integration environment has been set up.
-echo.
-echo Next steps:
-echo 1. Run setup_credentials.py to securely store your API credentials:
-echo    run_setup_credentials.bat --rc-jwt "your_rc_jwt" --rc-id "your_rc_id" --rc-secret "your_rc_secret" --rc-account "~" --zoho-id "your_zoho_id" --zoho-secret "your_zoho_secret" --zoho-refresh "your_zoho_refresh"
-echo.
-echo 2. Once credentials are set up, you can run the scripts:
-echo    For accepted calls:
-echo    run_accepted_calls.bat [--debug] [--dry-run]
-echo.
-echo    For missed calls:
-echo    run_missed_calls.bat [--debug] [--dry-run]
-echo.
-echo    For both scripts with date selection:
-echo    run_script_date.bat
-echo.
+call :log ""
+call :log "=========================================================="
+call :log "  Setup Complete!"
+call :log "=========================================================="
+call :log ""
+call :log "The integration environment has been set up."
+call :log ""
+call :log "Next steps:"
+call :log "1. Run setup_credentials.py to securely store your API credentials:"
+call :log "   run_setup_credentials.bat --rc-jwt "your_rc_jwt" --rc-id "your_rc_id" --rc-secret "your_rc_secret" --rc-account "~" --zoho-id "your_zoho_id" --zoho-secret "your_zoho_secret" --zoho-refresh "your_zoho_refresh""
+call :log ""
+call :log "2. Once credentials are set up, you can run the scripts:"
+call :log "   For accepted calls:"
+call :log "   run_accepted_calls.bat [--debug] [--dry-run]"
+call :log ""
+call :log "   For missed calls:"
+call :log "   run_missed_calls.bat [--debug] [--dry-run]"
+call :log ""
+call :log "   For both scripts with date selection:"
+call :log "   run_script_date.bat"
+call :log ""
+call :log "Log file location: %log_file%"
+call :log ""
 pause 

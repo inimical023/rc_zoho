@@ -85,19 +85,6 @@ if (Test-Path $installDir) {
     }
 }
 
-$files = @(
-    "setup_integration.bat",
-    "unified_admin.py",
-    "setup_credentials.py",
-    "secure_credentials.py",
-    "requirements.txt",
-    "launch_admin.bat",
-    "accepted_calls.py",
-    "missed_calls.py",
-    "common.py",
-    "README.md"
-)
-
 # Function to check Python installation
 function Test-PythonInstallation {
     try {
@@ -114,30 +101,6 @@ function Test-PythonInstallation {
         }
     } catch {
         Write-Log "Python is not installed or not in PATH: $_" -Level "ERROR"
-        return $false
-    }
-}
-
-# Function to download a file
-function Download-File {
-    param (
-        [string]$fileName
-    )
-    
-    $url = "$repoUrl/$fileName"
-    $outFile = Join-Path $installDir $fileName
-    
-    try {
-        Write-Log "Downloading $fileName..." -NoNewline
-        $downloadOutput = Invoke-WebRequest -Uri $url -OutFile $outFile 2>&1
-        $downloadOutput | ForEach-Object {
-            Write-Log $_ -Level "INFO"
-        }
-        Write-Log "Done" -Level "SUCCESS"
-        return $true
-    } catch {
-        Write-Log "Failed" -Level "ERROR"
-        Write-Log "Error downloading $fileName`: $_" -Level "ERROR"
         return $false
     }
 }
@@ -174,27 +137,20 @@ try {
     }
 }
 
-# Download all required files
-Write-Log "`nDownloading required files..."
-$success = $true
-foreach ($file in $files) {
-    if (-not (Download-File $file)) {
-        $success = $false
-        break
-    }
-}
-
-if (-not $success) {
-    Write-Log "`nSetup failed. Please check your internet connection and try again." -Level "ERROR"
-    Write-Log "Temp log file location: $tempLogFile" -Level "INFO"
-    Write-Log "Installation log file location: $installLogFile" -Level "INFO"
+# Download setup_integration.bat first
+Write-Log "`nDownloading setup_integration.bat..."
+try {
+    $setupFile = Join-Path $installDir "setup_integration.bat"
+    Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -OutFile $setupFile
+    Write-Log "Downloaded setup_integration.bat successfully" -Level "SUCCESS"
+} catch {
+    Write-Log "Failed to download setup_integration.bat: $_" -Level "ERROR"
     exit 1
 }
 
 # Run setup_integration.bat
 Write-Log "`nStarting integration setup..."
 try {
-    $setupFile = Join-Path $installDir "setup_integration.bat"
     Push-Location $installDir
     $setupOutput = & $setupFile 2>&1
     $setupOutput | ForEach-Object {
@@ -210,18 +166,6 @@ try {
     Write-Log "Temp log file location: $tempLogFile" -Level "INFO"
     Write-Log "Installation log file location: $installLogFile" -Level "INFO"
     exit 1
-}
-
-# Create desktop shortcut
-try {
-    $WshShell = New-Object -ComObject WScript.Shell
-    $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\RingCentral-Zoho Admin.lnk")
-    $Shortcut.TargetPath = Join-Path $installDir "launch_admin.bat"
-    $Shortcut.WorkingDirectory = $installDir
-    $Shortcut.Save()
-    Write-Log "`nDesktop shortcut created successfully!" -Level "SUCCESS"
-} catch {
-    Write-Log "Warning: Could not create desktop shortcut: $_" -Level "WARNING"
 }
 
 # Keep window open
