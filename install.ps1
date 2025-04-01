@@ -9,6 +9,17 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 $repoUrl = "https://raw.githubusercontent.com/inimical023/rc_zoho/main"
 $requiredPythonVersion = "3.8"
 
+# Get the last modified timestamp of the installation file
+try {
+    $response = Invoke-WebRequest -Uri "$repoUrl/install.ps1" -Method Head
+    $lastModified = $response.Headers['Last-Modified']
+    if ($lastModified) {
+        Write-Host "`nInstallation file last modified: $lastModified" -ForegroundColor Cyan
+    }
+} catch {
+    Write-Host "`nCould not fetch installation file timestamp: $_" -ForegroundColor Yellow
+}
+
 # Prompt for installation directory
 Write-Host "`nPlease enter the installation directory path:"
 Write-Host "Press Enter to use the default path ($env:USERPROFILE\RingCentralZoho)"
@@ -75,13 +86,20 @@ Write-Log "Temp log file location: $tempLogFile"
 Write-Log "Installation log file location: $installLogFile"
 
 # Validate the installation directory
-if (Test-Path $installDir) {
-    Write-Log "`nWarning: Directory '$installDir' already exists." -Level "WARNING"
-    Write-Log "Do you want to continue and potentially overwrite existing files? (Y/N)"
-    $response = Read-Host
-    if ($response -ne "Y") {
-        Write-Log "Installation cancelled by user." -Level "WARNING"
-        exit 1
+$dirExists = Test-Path $installDir
+$dirEmpty = $false
+if ($dirExists) {
+    $dirEmpty = -not (Get-ChildItem -Path $installDir -Force | Where-Object { $_.Name -notin @('logs') })
+    if (-not $dirEmpty) {
+        Write-Log "`nWarning: Directory '$installDir' exists and contains files." -Level "WARNING"
+        Write-Log "Do you want to continue and potentially overwrite existing files? (Y/N)"
+        $response = Read-Host
+        if ($response -ne "Y") {
+            Write-Log "Installation cancelled by user." -Level "WARNING"
+            exit 1
+        }
+    } else {
+        Write-Log "Directory exists but is empty, proceeding with installation..." -Level "INFO"
     }
 }
 
@@ -152,11 +170,19 @@ try {
 Write-Log "`nStarting integration setup..."
 try {
     Push-Location $installDir
-    $setupOutput = & $setupFile 2>&1
-    $setupOutput | ForEach-Object {
-        Write-Log $_ -Level "INFO"
+    $setupFile = Join-Path $installDir "setup_integration.bat"
+    if (-not (Test-Path $setupFile)) {
+        Write-Log "Error: setup_integration.bat not found at $setupFile" -Level "ERROR"
+        exit 1
     }
-    Pop-Location
+    
+    # Run the batch file with proper error handling
+    $process = Start-Process -FilePath $setupFile -Wait -NoNewWindow -PassThru
+    if ($process.ExitCode -ne 0) {
+        Write-Log "Error during setup: setup_integration.bat exited with code $($process.ExitCode)" -Level "ERROR"
+        Write-Log "Check the logs for more details." -Level "ERROR"
+        exit 1
+    }
     
     Write-Log "`nSetup completed successfully!" -Level "SUCCESS"
     Write-Log "Installation directory: $installDir" -Level "INFO"
@@ -166,6 +192,8 @@ try {
     Write-Log "Temp log file location: $tempLogFile" -Level "INFO"
     Write-Log "Installation log file location: $installLogFile" -Level "INFO"
     exit 1
+} finally {
+    Pop-Location
 }
 
 # Keep window open
