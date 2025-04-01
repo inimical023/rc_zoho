@@ -1,247 +1,260 @@
-@echo off
-setlocal enabledelayedexpansion
+# PowerShell script to set up RingCentral-Zoho Integration
+# PowerShell installation script for RingCentral-Zoho Integration
+# This script is created during setup_integration.bat execution
 
-:: Create logs directory if it doesn't exist
-if not exist logs mkdir logs
+# Set execution policy to allow script execution
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 
-:: Set up logging
-set "log_file=logs\setup_integration_%date:~-4,4%%date:~-10,2%%date:~-7,2%_%time:~0,2%%time:~3,2%%time:~6,2%.log"
+# Configuration
+$repoUrl = "https://raw.githubusercontent.com/inimical023/rc_zoho/main"
+$requiredPythonVersion = "3.8"
 
-:: Define the log function at the beginning but skip over it using GOTO
-goto :start_script
+# Get the last modified timestamp of the installation file
+try {
+    $response = Invoke-WebRequest -Uri "$repoUrl/install.ps1" -Method Head
+    $lastModified = $response.Headers['Last-Modified']
+    if ($lastModified) {
+        Write-Host "`nInstallation file last modified: $lastModified" -ForegroundColor Cyan
+    }
+} catch {
+    Write-Host "`nCould not fetch installation file timestamp: $_" -ForegroundColor Yellow
+}
 
-:log
-echo %~1 >> "%log_file%"
-echo %~1
-exit /b 0
+# Prompt for installation directory
+Write-Host "`nPlease enter the installation directory path:"
+Write-Host "Press Enter to use the default path ($env:USERPROFILE\RingCentralZoho)"
+$installDir = Read-Host
+if ([string]::IsNullOrWhiteSpace($installDir)) {
+    $installDir = Join-Path $env:USERPROFILE "RingCentralZoho"
+}
 
-:download_file
-set filename=%~1
-set url=%~2
-call :log "Downloading %filename%..."
-curl -s -o %filename% "%url%" >> "%log_file%" 2>&1
-if errorlevel 1 (
-    call :log "Failed to download %filename% from %url%"
-    call :log "Retrying with alternative method..."
-    powershell -Command "Invoke-WebRequest -Uri '%url%' -OutFile '%filename%'" >> "%log_file%" 2>&1
-    if errorlevel 1 (
-        call :log "Failed to download %filename% after retry"
-        exit /b 1
+# Create installation directory and logs folder first
+try {
+    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $installDir "logs") | Out-Null
+} catch {
+    Write-Host "Error creating directories: $_" -ForegroundColor Red
+    exit 1
+}
+
+# Setup logging in both temp and installation directories
+$tempLogDir = Join-Path $env:TEMP "RingCentralZoho_Install"
+New-Item -ItemType Directory -Force -Path $tempLogDir | Out-Null
+$tempLogFile = Join-Path $tempLogDir "install_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+$installLogFile = Join-Path $installDir "logs\installation_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+
+# Function to capture and log all output
+function Write-Log {
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
     )
-)
-call :log "Successfully downloaded %filename%"
-exit /b 0
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "[$timestamp] [$Level] $Message"
+    
+    # Write to both log files
+    Add-Content -Path $tempLogFile -Value $logMessage
+    Add-Content -Path $installLogFile -Value $logMessage
+    
+    # Display in console with appropriate color
+    switch ($Level) {
+        "ERROR" { Write-Host $Message -ForegroundColor Red }
+        "WARNING" { Write-Host $Message -ForegroundColor Yellow }
+        "SUCCESS" { Write-Host $Message -ForegroundColor Green }
+        default { Write-Host $Message }
+    }
+}
 
-:start_script
-:: Start logging
-call :log "=========================================================="
-call :log "  RingCentral-Zoho Integration Setup"
-call :log "=========================================================="
-call :log ""
-
-:: Verify GitHub connectivity
-call :log "Verifying GitHub connectivity..."
-curl -s -o nul -w "%%{http_code}" https://raw.githubusercontent.com/inimical023/rc_zoho/main/README.md > github_status.txt
-set /p github_status=<github_status.txt
-del github_status.txt
-
-if not "%github_status%"=="200" (
-    call :log "ERROR: Cannot access GitHub repository. Status code: %github_status%"
-    call :log "Please check your internet connection and try again."
-    pause
-    exit /b 1
-)
-
-call :log "GitHub repository is accessible. Continuing setup..."
-
-:: Check if Python is installed
-python --version >nul 2>&1
-if errorlevel 1 (
-    call :log "Python is not installed. Please install Python 3.8 or later."
-    pause
-    exit /b 1
-)
-
-:: Create virtual environment if it doesn't exist
-if not exist .venv (
-    call :log "Creating virtual environment..."
-    python -m venv .venv >> "%log_file%" 2>&1
-    if errorlevel 1 (
-        call :log "Failed to create virtual environment."
-        pause
-        exit /b 1
+# Function to capture and log command output
+function Invoke-CommandWithLogging {
+    param(
+        [string]$Command,
+        [string]$Description
     )
-)
+    Write-Log "Starting: $Description"
+    $output = & $Command 2>&1
+    $output | ForEach-Object {
+        Write-Log $_ -Level "INFO"
+    }
+    return $LASTEXITCODE
+}
 
-:: Activate virtual environment
-call :log "Activating virtual environment..."
-call .venv\Scripts\activate.bat
-if errorlevel 1 (
-    call :log "Failed to activate virtual environment."
-    pause
-    exit /b 1
-)
+Write-Log "Starting RingCentral-Zoho Integration Installation"
+Write-Log "========================================"
+Write-Log "Selected installation directory: $installDir"
+Write-Log "Temp log file location: $tempLogFile"
+Write-Log "Installation log file location: $installLogFile"
 
-:: Install required packages
-call :log "Installing required packages..."
-python -m pip install --upgrade pip >> "%log_file%" 2>&1
-python -m pip install "setuptools>=40.0.0" >> "%log_file%" 2>&1
-python -m pip install "tkcalendar>=1.6.0" >> "%log_file%" 2>&1
+# Validate the installation directory
+$dirExists = Test-Path $installDir
+$dirEmpty = $false
+if ($dirExists) {
+    $dirEmpty = -not (Get-ChildItem -Path $installDir -Force | Where-Object { $_.Name -notin @('logs') })
+    if (-not $dirEmpty) {
+        Write-Log "`nWarning: Directory '$installDir' exists and contains files." -Level "WARNING"
+        Write-Log "Do you want to continue and potentially overwrite existing files? (Y/N)"
+        $response = Read-Host
+        if ($response -ne "Y") {
+            Write-Log "Installation cancelled by user." -Level "WARNING"
+            exit 1
+        }
+    } else {
+        Write-Log "Directory exists but is empty, proceeding with installation..." -Level "INFO"
+    }
+}
 
-:: Check if requirements.txt exists
-if exist requirements.txt (
-    call :log "Found requirements.txt, installing dependencies..."
-    pip install -r requirements.txt >> "%log_file%" 2>&1
-) else (
-    call :log "Creating a basic requirements.txt file..."
-    echo requests>=2.25.1 > requirements.txt
-    echo python-dotenv>=0.15.0 >> requirements.txt
-    echo cryptography>=3.4.6 >> requirements.txt
-    echo pywin32>=300 >> requirements.txt
-    echo pytz>=2021.1 >> requirements.txt
-    echo python-dateutil>=2.8.1 >> requirements.txt
-    echo urllib3>=1.26.4 >> requirements.txt
-    echo tkcalendar>=2.1.1 >> requirements.txt
-    pip install -r requirements.txt >> "%log_file%" 2>&1
-)
+# Function to check Python installation
+function Test-PythonInstallation {
+    try {
+        $pythonVersion = python -c "import sys; print('.'.join(map(str, sys.version_info[:2])))"
+        $pythonVersion = [version]$pythonVersion
+        $requiredVersion = [version]$requiredPythonVersion
+        
+        if ($pythonVersion -ge $requiredVersion) {
+            Write-Log "Python $pythonVersion found." -Level "SUCCESS"
+            return $true
+        } else {
+            Write-Log "Python $requiredPythonVersion or higher is required. Found version $pythonVersion" -Level "ERROR"
+            return $false
+        }
+    } catch {
+        Write-Log "Python is not installed or not in PATH: $_" -Level "ERROR"
+        return $false
+    }
+}
 
-:: Verify package installation
-call :log "Verifying package installation..."
-python -c "try:
-    import setuptools
-    import cryptography
-    import os
-    import dotenv
-    import requests
-    import dateutil
-    import pytz
-    import urllib3
-    import certifi
-    import charset_normalizer
-    import idna
-    print('All required packages installed successfully!')
-except ImportError as e:
-    print(f'Package verification warning: {e}')
-    print('This does not necessarily mean the installation failed.')
-    print('Some packages may use different import names than their package names.')
-" >> "%log_file%" 2>&1
+# Main installation process
+Write-Log "RingCentral-Zoho Integration Setup" -Level "INFO"
+Write-Log "=================================" -Level "INFO"
 
-call :log "Package verification complete. Continuing with setup..."
+# Check Python installation
+if (-not (Test-PythonInstallation)) {
+    Write-Log "Please install Python $requiredPythonVersion or higher and add it to PATH." -Level "WARNING"
+    Write-Log "Download Python from: https://www.python.org/downloads/" -Level "WARNING"
+    exit 1
+}
 
-:: Create data directory if it doesn't exist
-if not exist data mkdir data
+# Create installation directory
+Write-Log "`nCreating installation directory..." -NoNewline
+try {
+    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+    Write-Log "Done" -Level "SUCCESS"
+} catch {
+    Write-Log "Failed" -Level "ERROR"
+    Write-Log "Error creating directory: $_" -Level "ERROR"
+    exit 1
+}
 
-:: Download scripts from GitHub
-call :log "Downloading scripts from GitHub..."
+# Create required subdirectories
+@('logs', 'data') | ForEach-Object {
+    $dir = Join-Path $installDir $_
+    try {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    } catch {
+        Write-Log "Error creating subdirectory $_`: $_" -Level "ERROR"
+    }
+}
 
-:: Set GitHub repository URL and branch
-set GITHUB_REPO=https://raw.githubusercontent.com/inimical023/rc_zoho/main
+# Download setup_integration.bat first
+Write-Log "`nDownloading setup_integration.bat..."
+try {
+    $setupFile = Join-Path $installDir "setup_integration.bat"
+    Invoke-WebRequest -Uri "$repoUrl/setup_integration.bat" -OutFile $setupFile
+    Write-Log "Downloaded setup_integration.bat successfully" -Level "SUCCESS"
+} catch {
+    Write-Log "Failed to download setup_integration.bat: $_" -Level "ERROR"
+    exit 1
+}
 
-:: Download all necessary files with improved error handling
-call :download_file "common.py" "%GITHUB_REPO%/common.py"
-call :download_file "accepted_calls.py" "%GITHUB_REPO%/accepted_calls.py"
-call :download_file "missed_calls.py" "%GITHUB_REPO%/missed_calls.py"
-call :download_file "secure_credentials.py" "%GITHUB_REPO%/secure_credentials.py"
-call :download_file "unified_admin.py" "%GITHUB_REPO%/unified_admin.py"
-call :download_file "requirements.txt" "%GITHUB_REPO%/requirements.txt"
-call :download_file "README.md" "%GITHUB_REPO%/README.md"
+# Run setup_integration.bat
+Write-Log "`nStarting integration setup..."
+try {
+    Push-Location $installDir
+    $setupFile = Join-Path $installDir "setup_integration.bat"
+    if (-not (Test-Path $setupFile)) {
+        Write-Log "Error: setup_integration.bat not found at $setupFile" -Level "ERROR"
+        exit 1
+    }
+    
+    # Add executable permissions to the batch file (just in case)
+    Write-Log "Setting batch file permissions..."
+    
+    # Run the batch file with cmd.exe directly, which is better for batch files
+    $cmdPath = "$env:SystemRoot\System32\cmd.exe"
+    Write-Log "Running setup_integration.bat using $cmdPath..."
+    $process = Start-Process -FilePath $cmdPath -ArgumentList "/c $setupFile" -WorkingDirectory $installDir -Wait -NoNewWindow -PassThru
+    
+    # Check process execution
+    if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 255) {
+        Write-Log "Error during setup: setup_integration.bat exited with code $($process.ExitCode)" -Level "ERROR"
+        Write-Log "Check the logs for more details." -Level "ERROR"
+        
+        # Check for expected files to diagnose issues
+        Write-Log "Diagnostic information:" -Level "INFO"
+        $expectedFiles = @(".venv", "launch_admin.bat", "unified_admin.py", "common.py")
+        foreach ($file in $expectedFiles) {
+            $filePath = Join-Path $installDir $file
+            if (Test-Path $filePath) {
+                Write-Log "- $file EXISTS" -Level "INFO"
+            } else {
+                Write-Log "- $file MISSING" -Level "WARNING"
+            }
+        }
+        
+        exit 1
+    } elseif ($process.ExitCode -eq 255) {
+        # Some batch files return 255 when they end with 'pause', even if they ran successfully
+        # Check for key files to determine if the installation was actually successful
+        $allFilesExist = $true
+        $expectedFiles = @("launch_admin.bat", "unified_admin.py", "common.py")
+        foreach ($file in $expectedFiles) {
+            $filePath = Join-Path $installDir $file
+            if (-not (Test-Path $filePath)) {
+                $allFilesExist = $false
+                break
+            }
+        }
+        
+        if ($allFilesExist) {
+            Write-Log "Setup completed successfully despite exit code 255 (common with batch files)" -Level "SUCCESS"
+        } else {
+            Write-Log "Error during setup: exit code 255 and missing key files" -Level "ERROR"
+            exit 1
+        }
+    }
+    
+    # Verify key files were created
+    $missingFiles = @()
+    $expectedFiles = @("launch_admin.bat", "unified_admin.py", "common.py")
+    foreach ($file in $expectedFiles) {
+        $filePath = Join-Path $installDir $file
+        if (-not (Test-Path $filePath)) {
+            $missingFiles += $file
+        }
+    }
+    
+    if ($missingFiles.Count -gt 0) {
+        Write-Log "Warning: Some expected files were not created:" -Level "WARNING"
+        foreach ($file in $missingFiles) {
+            Write-Log "- $file" -Level "WARNING"
+        }
+    }
+    
+    Write-Log "`nSetup completed successfully!" -Level "SUCCESS"
+    Write-Log "Installation directory: $installDir" -Level "INFO"
+    Write-Log "`nYou can now run the Unified Admin GUI by double-clicking 'launch_admin.bat' in the installation directory." -Level "INFO"
+} catch {
+    Write-Log "Error during setup: $_" -Level "ERROR"
+    Write-Log "Temp log file location: $tempLogFile" -Level "INFO"
+    Write-Log "Installation log file location: $installLogFile" -Level "INFO"
+    exit 1
+} finally {
+    Pop-Location
+}
 
-:: Verify that essential files were downloaded
-call :log "Verifying file downloads..."
-set missing_files=0
-for %%f in (common.py unified_admin.py secure_credentials.py) do (
-    if not exist %%f (
-        call :log "ERROR: Essential file %%f is missing!"
-        set /a missing_files+=1
-    )
-)
-
-if %missing_files% GTR 0 (
-    call :log "ERROR: %missing_files% essential files are missing. Setup cannot continue."
-    pause
-    exit /b 1
-)
-
-:: Create launch_admin.bat
-call :log "Creating launch_admin.bat..."
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python unified_admin.py %%*
-) > launch_admin.bat
-
-:: Verify launch_admin.bat was created
-if not exist launch_admin.bat (
-    call :log "ERROR: Failed to create launch_admin.bat"
-    pause
-    exit /b 1
-)
-
-:: Create other launcher scripts
-call :log "Creating launcher scripts..."
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python setup_credentials.py %%*
-) > run_setup_credentials.bat
-
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python accepted_calls.py %%*
-) > run_accepted_calls.bat
-
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python missed_calls.py %%*
-) > run_missed_calls.bat
-
-call :log ""
-call :log "=========================================================="
-call :log "  Setup Complete!"
-call :log "=========================================================="
-call :log ""
-call :log "The integration environment has been set up."
-call :log ""
-call :log "Next steps:"
-call :log "1. Configure your API credentials using:"
-call :log "   run_setup_credentials.bat"
-call :log ""
-call :log "2. Run the unified admin interface:"
-call :log "   launch_admin.bat"
-call :log ""
-call :log "Log file location: %log_file%"
-call :log ""
-
-:: Create a simple setup_credentials.py if it doesn't exist
-if not exist setup_credentials.py (
-    call :log "Creating basic setup_credentials.py..."
-    (
-        echo import os
-        echo import sys
-        echo import logging
-        echo from pathlib import Path
-        echo.
-        echo # Configure logging
-        echo logging.basicConfig(
-        echo     level=logging.INFO,
-        echo     format='%%(asctime)s - %%(levelname)s - %%(message)s',
-        echo     handlers=[
-        echo         logging.FileHandler('logs/setup_credentials.log'),
-        echo         logging.StreamHandler()
-        echo     ]
-        echo )
-        echo.
-        echo def main():
-        echo     """Main function"""
-        echo     print("Setting up credentials...")
-        echo     print("Please check the documentation for details on how to obtain API credentials.")
-        echo.
-        echo if __name__ == "__main__":
-        echo     main()
-    ) > setup_credentials.py
-)
-
-:: End of script
-pause 
+# Keep window open
+Write-Log "`nPress any key to exit..."
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") 
+Write-Log "Installation completed successfully" -Level "SUCCESS"
+Write-Log "Temp log file location: $tempLogFile" -Level "INFO"
+Write-Log "Installation log file location: $installLogFile" -Level "INFO"
