@@ -225,6 +225,7 @@ call :download_file "common.py" "%GITHUB_REPO%/common.py"
 call :download_file "accepted_calls.py" "%GITHUB_REPO%/accepted_calls.py"
 call :download_file "missed_calls.py" "%GITHUB_REPO%/missed_calls.py"
 call :download_file "secure_credentials.py" "%GITHUB_REPO%/secure_credentials.py"
+call :download_file "setup_credentials.py" "%GITHUB_REPO%/setup_credentials.py"
 call :download_file "unified_admin.py" "%GITHUB_REPO%/unified_admin.py"
 call :download_file "requirements.txt" "%GITHUB_REPO%/requirements.txt"
 call :download_file "README.md" "%GITHUB_REPO%/README.md"
@@ -235,7 +236,7 @@ set missing_files=0
 set download_errors=0
 
 :: Check essential files and download them if missing
-for %%f in (common.py unified_admin.py secure_credentials.py) do (
+for %%f in (common.py unified_admin.py secure_credentials.py setup_credentials.py) do (
     if not exist %%f (
         call :log "Essential file %%f is missing! Trying to download again..." -Level "WARNING"
         call :download_file "%%f" "%GITHUB_REPO%/%%f"
@@ -307,9 +308,9 @@ call :log ""
 call :log "Log file location: %log_file%"
 call :log ""
 
-:: Create a simple setup_credentials.py if it doesn't exist
+::: Create a simple setup_credentials.py if it doesn't exist
 if not exist setup_credentials.py (
-    call :log "Creating basic setup_credentials.py..."
+    call :log "Creating basic setup_credentials.py as download failed..." -Level "WARNING"
     echo import os > setup_credentials.py
     echo import sys >> setup_credentials.py
     echo import logging >> setup_credentials.py
@@ -329,6 +330,9 @@ if not exist setup_credentials.py (
     echo     """Main function""" >> setup_credentials.py
     echo     print("Setting up credentials...") >> setup_credentials.py
     echo     print("Please check the documentation for details on how to obtain API credentials.") >> setup_credentials.py
+    echo     print("IMPORTANT: This is a placeholder file created during installation.") >> setup_credentials.py
+    echo     print("The full version should have been downloaded from GitHub.") >> setup_credentials.py
+    echo     print("Please re-run the installer or download the file manually.") >> setup_credentials.py
     echo. >> setup_credentials.py
     echo if __name__ == "__main__": >> setup_credentials.py
     echo     main() >> setup_credentials.py

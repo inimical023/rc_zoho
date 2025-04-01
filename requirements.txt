@@ -16,6 +16,7 @@ idna>=3.4,<4.0.0
 
 # Windows-specific (required for GUI)
 pywin32>=305; platform_system == "Windows"
+tkcalendar>=2.1.1; platform_system == "Windows"
 
 # RingCentral API
 ringcentral>=0.8.0,<1.0.0 

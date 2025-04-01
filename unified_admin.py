@@ -12,6 +12,14 @@ from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 import subprocess
 
+# Try importing optional dependencies with proper error handling
+try:
+    import tkcalendar
+    HAS_TKCALENDAR = True
+except ImportError:
+    HAS_TKCALENDAR = False
+    logging.warning("tkcalendar module not found. Date selector features will be unavailable.")
+
 # Create required directories first
 Path('logs').mkdir(exist_ok=True)
 Path('data').mkdir(exist_ok=True)
@@ -1066,14 +1074,6 @@ class RunScriptTab(ttk.Frame):
         date_frame.grid_columnconfigure(1, weight=1)
         date_frame.grid_columnconfigure(3, weight=1)
 
-        # Add calendar imports
-        try:
-            import tkcalendar
-            self.has_tkcalendar = True
-        except ImportError:
-            self.has_tkcalendar = False
-            logger.warning("tkcalendar not installed. Using text entry for date selection.")
-
         # Start Date and Time
         ttk.Label(date_frame, text="Start Date:").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
         
@@ -1081,7 +1081,7 @@ class RunScriptTab(ttk.Frame):
         start_date_frame = ttk.Frame(date_frame)
         start_date_frame.grid(row=0, column=1, sticky="ew", pady=5)
         
-        if self.has_tkcalendar:
+        if HAS_TKCALENDAR:
             self.start_date_cal = tkcalendar.DateEntry(
                 start_date_frame, 
                 width=12, 
@@ -1128,7 +1128,7 @@ class RunScriptTab(ttk.Frame):
         end_date_frame = ttk.Frame(date_frame)
         end_date_frame.grid(row=1, column=1, sticky="ew", pady=5)
         
-        if self.has_tkcalendar:
+        if HAS_TKCALENDAR:
             self.end_date_cal = tkcalendar.DateEntry(
                 end_date_frame, 
                 width=12, 
@@ -1209,7 +1209,7 @@ class RunScriptTab(ttk.Frame):
             return
             
         # Update the date pickers
-        if self.has_tkcalendar:
+        if HAS_TKCALENDAR:
             self.start_date_cal.set_date(start)
             self.end_date_cal.set_date(end)
         else:
@@ -1229,7 +1229,7 @@ class RunScriptTab(ttk.Frame):
         """Get formatted date strings from the UI components"""
         try:
             # Get the date component
-            if self.has_tkcalendar:
+            if HAS_TKCALENDAR:
                 start_date = self.start_date_cal.get_date()
                 end_date = self.end_date_cal.get_date()
             else:

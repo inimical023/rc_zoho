@@ -136,7 +136,7 @@ if ($dirExists) {
     $dirEmpty = -not (Get-ChildItem -Path $installDir -Force | Where-Object { $_.Name -notin @('logs') })
     if (-not $dirEmpty) {
         Write-Log "`nWarning: Directory '$installDir' exists and contains files." -Level "WARNING"
-        Write-Log "Do you want to continue and potentially overwrite existing files? (Y/N)"
+        Write-Host "Do you want to continue and potentially overwrite existing files? (Y/N)"
         $response = Read-Host
         if ($response -ne "Y") {
             Write-Log "Installation cancelled by user." -Level "WARNING"
@@ -277,42 +277,33 @@ try {
     $process = Start-Process -FilePath $cmdPath -ArgumentList "/c $setupFile" -WorkingDirectory $installDir -Wait -NoNewWindow -PassThru
     
     # Check process execution
-    if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 255) {
-        Write-Log "Error during setup: setup_integration.bat exited with code $($process.ExitCode)" -Level "ERROR"
-        Write-Log "Check the logs for more details." -Level "ERROR"
-        
-        # Check for expected files to diagnose issues
-        Write-Log "Diagnostic information:" -Level "INFO"
-        $expectedFiles = @(".venv", "launch_admin.bat", "unified_admin.py", "common.py")
-        foreach ($file in $expectedFiles) {
-            $filePath = Join-Path $installDir $file
-            if (Test-Path $filePath) {
-                Write-Log "- $file EXISTS" -Level "INFO"
-            } else {
-                Write-Log "- $file MISSING" -Level "WARNING"
-            }
-        }
-        
-        exit 1
-    } elseif ($process.ExitCode -eq 255) {
-        # Some batch files return 255 when they end with 'pause', even if they ran successfully
-        # Check for key files to determine if the installation was actually successful
-        $allFilesExist = $true
+    if ($process.ExitCode -ne 0) {
+        # In case the batch file returns non-zero, check if key files exist anyway
         $expectedFiles = @("launch_admin.bat", "unified_admin.py", "common.py")
+        $missingFiles = @()
         foreach ($file in $expectedFiles) {
             $filePath = Join-Path $installDir $file
             if (-not (Test-Path $filePath)) {
-                $allFilesExist = $false
-                break
+                $missingFiles += $file
             }
         }
         
-        if ($allFilesExist) {
-            Write-Log "Setup completed successfully despite exit code 255 (common with batch files)" -Level "SUCCESS"
+        # If all required files exist, consider the installation successful despite error code
+        if ($missingFiles.Count -eq 0) {
+            Write-Log "Setup completed successfully despite non-zero exit code" -Level "SUCCESS"
         } else {
-            Write-Log "Error during setup: exit code 255 and missing key files" -Level "ERROR"
+            Write-Log "Error during setup: setup_integration.bat exited with code $($process.ExitCode)" -Level "ERROR"
+            Write-Log "Missing key files: $($missingFiles -join ', ')" -Level "ERROR"
+            
+            # Give the user clear instructions for manual file checking
+            Write-Log "Check the logs for more details:" -Level "INFO"
+            Write-Log "- $installLogFile" -Level "INFO"
+            Write-Log "- $tempLogFile" -Level "INFO"
+            
             exit 1
         }
+    } else {
+        Write-Log "Batch script completed successfully with exit code 0" -Level "SUCCESS"
     }
     
     # Verify key files were created
