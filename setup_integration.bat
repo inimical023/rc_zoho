@@ -172,6 +172,45 @@ if not errorlevel 1 (
 del verify_packages.py 2>nul
 call :log "Package verification complete. Continuing with setup..."
 
+:: Create launch_admin.bat and other launcher scripts immediately after verification
+:: to ensure they exist even if later steps fail
+call :log "Creating launcher scripts (early creation for resilience)..."
+
+:: Create launch_admin.bat - critical file for PowerShell detection
+call :log "Creating launch_admin.bat..."
+(
+    echo @echo off
+    echo call .venv\Scripts\activate.bat
+    echo python unified_admin.py %%*
+) > launch_admin.bat
+
+:: Check if this critical file was created
+if not exist launch_admin.bat (
+    call :log "ERROR: Failed initial creation of launch_admin.bat - trying alternative method" -Level "ERROR"
+    >launch_admin.bat echo @echo off
+    >>launch_admin.bat echo call .venv\Scripts\activate.bat
+    >>launch_admin.bat echo python unified_admin.py %%*
+)
+
+:: Create other launcher scripts
+(
+    echo @echo off
+    echo call .venv\Scripts\activate.bat
+    echo python setup_credentials.py %%*
+) > run_setup_credentials.bat
+
+(
+    echo @echo off
+    echo call .venv\Scripts\activate.bat
+    echo python accepted_calls.py %%*
+) > run_accepted_calls.bat
+
+(
+    echo @echo off
+    echo call .venv\Scripts\activate.bat
+    echo python missed_calls.py %%*
+) > run_missed_calls.bat
+
 :: Create data directory if it doesn't exist
 if not exist data mkdir data
 
@@ -250,50 +289,6 @@ if %missing_files% GTR 0 (
         echo         return self.zoho_creds >> secure_credentials.py
     )
 )
-
-:: Create launch_admin.bat - always create this regardless
-call :log "Creating launch_admin.bat..."
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python unified_admin.py %%*
-) > launch_admin.bat
-
-:: Verify launch_admin.bat was created
-if not exist launch_admin.bat (
-    call :log "ERROR: Failed to create launch_admin.bat - trying alternative method" -Level "ERROR"
-    >launch_admin.bat echo @echo off
-    >>launch_admin.bat echo call .venv\Scripts\activate.bat
-    >>launch_admin.bat echo python unified_admin.py %%*
-)
-
-:: Double-check launch_admin.bat was created
-if not exist launch_admin.bat (
-    call :log "CRITICAL ERROR: Could not create launcher scripts!" -Level "ERROR"
-    exit /b 1
-) else (
-    call :log "Launcher scripts created successfully" -Level "SUCCESS"
-)
-
-:: Create other launcher scripts
-call :log "Creating launcher scripts..."
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python setup_credentials.py %%*
-) > run_setup_credentials.bat
-
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python accepted_calls.py %%*
-) > run_accepted_calls.bat
-
-(
-    echo @echo off
-    echo call .venv\Scripts\activate.bat
-    echo python missed_calls.py %%*
-) > run_missed_calls.bat
 
 call :log ""
 call :log "=========================================================="
