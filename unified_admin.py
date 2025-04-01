@@ -2001,6 +2001,15 @@ class UnifiedAdminGUI:
         )
         self.status_label.grid(row=0, column=0, padx=15, sticky="w")
         
+        # Author credit in the middle with subtle styling
+        credit_label = ttk.Label(
+            self.footer_frame,
+            text="Alex Cherem | 2025",
+            font=("Helvetica", 8),
+            foreground="#888888"  # Light gray color
+        )
+        credit_label.grid(row=0, column=1, pady=5)
+        
         # Open Logs button on the right
         if HAS_TTKBOOTSTRAP:
             self.logs_button = ttk.Button(
