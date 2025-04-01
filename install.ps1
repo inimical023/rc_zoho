@@ -32,6 +32,7 @@ New-Item -ItemType Directory -Force -Path $tempLogDir | Out-Null
 $tempLogFile = Join-Path $tempLogDir "install_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 $installLogFile = Join-Path $installDir "logs\installation_log_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
+# Function to capture and log all output
 function Write-Log {
     param(
         [string]$Message,
@@ -51,6 +52,20 @@ function Write-Log {
         "SUCCESS" { Write-Host $Message -ForegroundColor Green }
         default { Write-Host $Message }
     }
+}
+
+# Function to capture and log command output
+function Invoke-CommandWithLogging {
+    param(
+        [string]$Command,
+        [string]$Description
+    )
+    Write-Log "Starting: $Description"
+    $output = & $Command 2>&1
+    $output | ForEach-Object {
+        Write-Log $_ -Level "INFO"
+    }
+    return $LASTEXITCODE
 }
 
 Write-Log "Starting RingCentral-Zoho Integration Installation"
@@ -114,7 +129,10 @@ function Download-File {
     
     try {
         Write-Log "Downloading $fileName..." -NoNewline
-        Invoke-WebRequest -Uri $url -OutFile $outFile
+        $downloadOutput = Invoke-WebRequest -Uri $url -OutFile $outFile 2>&1
+        $downloadOutput | ForEach-Object {
+            Write-Log $_ -Level "INFO"
+        }
         Write-Log "Done" -Level "SUCCESS"
         return $true
     } catch {
@@ -178,7 +196,10 @@ Write-Log "`nStarting integration setup..."
 try {
     $setupFile = Join-Path $installDir "setup_integration.bat"
     Push-Location $installDir
-    Start-Process -FilePath $setupFile -Wait -NoNewWindow
+    $setupOutput = & $setupFile 2>&1
+    $setupOutput | ForEach-Object {
+        Write-Log $_ -Level "INFO"
+    }
     Pop-Location
     
     Write-Log "`nSetup completed successfully!" -Level "SUCCESS"
