@@ -140,7 +140,7 @@ echo vulnerable = [] >> verify_packages.py
 :: Run verification script
 python verify_packages.py >> "%log_file%" 2>&1
 if errorlevel 1 (
-    call :log "Package verification had issues, but continuing setup..." -Level "WARNING"
+    call :log "Package verification detected vulnerable packages or issues, continuing setup..." -Level "WARNING"
 ) else (
     call :log "Package verification completed successfully" -Level "SUCCESS"
 )
