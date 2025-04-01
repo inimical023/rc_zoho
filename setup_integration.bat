@@ -112,26 +112,28 @@ if exist requirements.txt (
 :: Verify package installation using a batch script approach
 call :log "Verifying package installation..."
 
-:: Create a simple verification script with no indentation
+:: Create a simple verification script with proper indentation handling
 echo import pkg_resources, json > verify_packages.py
 echo print("Checking for required packages...") >> verify_packages.py
 echo packages_status = {} >> verify_packages.py
 echo secure_versions = { "cryptography": "3.4.8", "urllib3": "1.26.5", "requests": "2.25.1", "certifi": "2021.10.8" } >> verify_packages.py
 echo vulnerable = [] >> verify_packages.py
-echo for pkg, min_ver in secure_versions.items(): >> verify_packages.py
-echo     try: >> verify_packages.py
-echo         ver = pkg_resources.get_distribution(pkg).version >> verify_packages.py
-echo         if pkg_resources.parse_version(ver) < pkg_resources.parse_version(min_ver): >> verify_packages.py
-echo             vulnerable.append(pkg + ">=" + min_ver) >> verify_packages.py
-echo             print(f"{pkg}: {ver} (update to {min_ver} recommended)") >> verify_packages.py
-echo         else: >> verify_packages.py
-echo             print(f"{pkg}: {ver} (OK)") >> verify_packages.py
-echo     except: >> verify_packages.py
-echo         print(f"{pkg}: Not found") >> verify_packages.py
-echo if vulnerable: >> verify_packages.py
-echo     print("SECURITY ALERT: Vulnerable packages found") >> verify_packages.py
-echo     with open("upgrade_list.txt", "w") as f: >> verify_packages.py
-echo         f.write(" ".join(vulnerable)) >> verify_packages.py
+(
+    echo for pkg, min_ver in secure_versions.items():
+    echo     try:
+    echo         ver = pkg_resources.get_distribution(pkg).version
+    echo         if pkg_resources.parse_version(ver) ^< pkg_resources.parse_version(min_ver):
+    echo             vulnerable.append(pkg + ">=" + min_ver)
+    echo             print(f"{pkg}: {ver} (update to {min_ver} recommended)")
+    echo         else:
+    echo             print(f"{pkg}: {ver} (OK)")
+    echo     except:
+    echo         print(f"{pkg}: Not found")
+    echo if vulnerable:
+    echo     print("SECURITY ALERT: Vulnerable packages found")
+    echo     with open("upgrade_list.txt", "w") as f:
+    echo         f.write(" ".join(vulnerable))
+) >> verify_packages.py
 
 :: Run verification script
 python verify_packages.py >> "%log_file%" 2>&1
