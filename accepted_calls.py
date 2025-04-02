@@ -66,9 +66,36 @@ def check_and_install_dependencies():
 # Check and install dependencies before proceeding
 check_and_install_dependencies()
 
-# Initialize storage and logger
+# Initialize storage and a basic logger first
 storage = SecureStorage()
-logger = setup_logging("accepted_calls")
+logger = logging.getLogger("accepted_calls")  # Initialize a default logger
+
+# Configure basic logging first to ensure we have a logger available
+logging.basicConfig(
+    level=logging.INFO,
+    format=LOG_FORMAT,
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+# Script directory and paths setup
+script_dir = os.path.dirname(os.path.abspath(__file__))
+base_dir = os.path.dirname(script_dir)  # Get parent directory
+data_dir = os.path.join(base_dir, 'data')
+logs_dir = os.path.join(script_dir, 'logs')
+os.makedirs(logs_dir, exist_ok=True)
+
+# Only create a default log file if this script is run as the main module
+if __name__ == "__main__":
+    # Set up logging with date and time in filename
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = os.path.join(logs_dir, f'accepted_calls_{current_time}.log')
+    
+    # Add file handler to the existing logger
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger.addHandler(file_handler)
 
 # Clear text credentials - REPLACE THESE WITH YOUR ACTUAL CREDENTIALS
 RC_JWT_TOKEN = ""
@@ -78,28 +105,6 @@ RC_ACCOUNT_ID = "~"
 ZOHO_CLIENT_ID = ""
 ZOHO_CLIENT_SECRET = ""
 ZOHO_REFRESH_TOKEN = ""
-
-# Script directory and paths setup
-script_dir = os.path.dirname(os.path.abspath(__file__))
-base_dir = os.path.dirname(script_dir)  # Get parent directory
-data_dir = os.path.join(base_dir, 'data')
-logs_dir = os.path.join(script_dir, 'logs')
-os.makedirs(logs_dir, exist_ok=True)
-
-# Set up logging with date and time in filename
-current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_file = os.path.join(logs_dir, f'accepted_calls_{current_time}.log')
-
-logging.basicConfig(
-    level=logging.INFO,
-    format=LOG_FORMAT,
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("accepted_calls")
-
 
 class RingCentralClient:
     """Client for interacting with the RingCentral API."""
@@ -1170,8 +1175,6 @@ def main():
         args = parse_arguments()
         
         # Set up logging based on debug flag
-        global logger
-        logger = setup_logging("accepted_calls")
         if args.debug:
             logger.setLevel(logging.DEBUG)
             logger.debug("Debug logging enabled")

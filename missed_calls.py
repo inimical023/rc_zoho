@@ -3,13 +3,41 @@ import itertools  # For round-robin lead owner assignment
 import argparse
 import time
 import re  # Add import for regular expressions
-
-# Check and install dependencies
-check_and_install_dependencies()
+import logging
 
 # Initialize storage and logger
 storage = SecureStorage()
-logger = setup_logging("missed_calls")
+logger = logging.getLogger("missed_calls")  # Initialize a default logger
+
+# Configure basic logging first to ensure we have a logger available
+logging.basicConfig(
+    level=logging.INFO,
+    format=LOG_FORMAT,
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+# Check and install dependencies with logging available
+check_and_install_dependencies()
+
+# Script directory and paths setup
+script_dir = os.path.dirname(os.path.abspath(__file__))
+base_dir = os.path.dirname(script_dir)  # Get parent directory
+data_dir = os.path.join(base_dir, 'data')
+logs_dir = os.path.join(script_dir, 'logs')
+os.makedirs(logs_dir, exist_ok=True)
+
+# Only create a default log file if this script is run as the main module
+if __name__ == "__main__":
+    # Set up logging with date and time in filename
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = os.path.join(logs_dir, f'missed_calls_{current_time}.log')
+    
+    # Add file handler to logger
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logger.addHandler(file_handler)
 
 # Clear text credentials - REPLACE THESE WITH YOUR ACTUAL CREDENTIALS
 RC_JWT_TOKEN = ""
@@ -1098,12 +1126,12 @@ def main():
         # Parse command line arguments
         args = parse_arguments()
         
-        # Set up logging
-        global logger
-        logger = setup_logging("missed_calls")
+        # Set up logging based on debug flag
         if args.debug:
             logger.setLevel(logging.DEBUG)
             logger.debug("Debug logging enabled")
+        else:
+            logger.setLevel(logging.INFO)
         
         # Override log file location if provided
         if args.log_file:
