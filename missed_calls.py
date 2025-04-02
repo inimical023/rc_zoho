@@ -1099,9 +1099,20 @@ def main():
         args = parse_arguments()
         
         # Set up logging
+        global logger
         logger = setup_logging("missed_calls")
         if args.debug:
             logger.setLevel(logging.DEBUG)
+            logger.debug("Debug logging enabled")
+        
+        # Override log file location if provided
+        if args.log_file:
+            for handler in logger.handlers[:]:
+                if isinstance(handler, logging.FileHandler):
+                    logger.removeHandler(handler)
+            file_handler = logging.FileHandler(args.log_file)
+            file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+            logger.addHandler(file_handler)
         
         # Get date range for processing
         if args.start_date and args.end_date:
@@ -1179,7 +1190,7 @@ def main():
             logger.info(f"  Other calls skipped: {stats.get('skipped_calls', 0)}")
         
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        logging.error(f"Error in main: {str(e)}")
         raise
 
 

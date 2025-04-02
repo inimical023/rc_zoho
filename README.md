@@ -72,6 +72,12 @@ Check the `logs` directory for detailed error messages and application logs.
 
 ### Version 1.1.0 (Current)
 
+#### Bug Fixes
+- **Fixed logger initialization issue** when running scripts from the GUI:
+  - Added proper initialization of the global logger in main functions
+  - Improved error handling in the Unified Admin GUI
+  - Ensured scripts run from the correct working directory
+
 #### Missed Calls Script Improvements
 - **Fixed duplicate lead creation issue** with multiple layers of protection:
   - Added phone number normalization to standardize formats

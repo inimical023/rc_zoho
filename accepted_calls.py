@@ -1165,13 +1165,13 @@ def parse_arguments():
 
 def main():
     """Main function"""
-    # Set up a default logger in case of early failure
-    default_logger = logging.getLogger("accepted_calls")
     try:
         # Parse command line arguments
         args = parse_arguments()
         
         # Set up logging based on debug flag
+        global logger
+        logger = setup_logging("accepted_calls")
         if args.debug:
             logger.setLevel(logging.DEBUG)
             logger.debug("Debug logging enabled")
@@ -1186,48 +1186,69 @@ def main():
             file_handler = logging.FileHandler(args.log_file)
             file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
             logger.addHandler(file_handler)
-            logger.info(f"Logging to custom log file: {args.log_file}")
-            
-        # Display script mode and version
-        mode = "DRY RUN" if args.dry_run else "PRODUCTION"
+        
+        # Get current time for logging
+        current_time = datetime.now()
+        logger.info(f"AcceptedCalls.py - Starting at {current_time}")
+        
+        # Process in dry-run mode if specified
+        mode = "DRY RUN" if args.dry_run else "PRODUCTION" 
         logger.info(f"Starting accepted calls processing in {mode} mode")
-        logger.info(f"AcceptedCalls.py - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Get date range for processing
-        start_date, end_date = get_date_range(args.hours_back, args.start_date, args.end_date)
+        if args.start_date and args.end_date:
+            # Convert space to 'T' in the datetime strings
+            start_date = args.start_date.replace(" ", "T")
+            end_date = args.end_date.replace(" ", "T")
+        elif args.hours_back:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(hours=args.hours_back)
+            start_date = start_date.strftime("%Y-%m-%dT%H:%M:%S")
+            end_date = end_date.strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            # Default to last 24 hours
+            end_date = datetime.now()
+            start_date = end_date - timedelta(hours=24)
+            start_date = start_date.strftime("%Y-%m-%dT%H:%M:%S")
+            end_date = end_date.strftime("%Y-%m-%dT%H:%M:%S")
+            
         logger.info(f"Processing calls from {start_date} to {end_date}")
         
-        # Initialize clients
+        # Initialize API clients
         logger.info("Initializing API clients...")
-        try:
-            rc_client = RingCentralClient()
+        rc_client = RingCentralClient()
+        if rc_client and rc_client.access_token:
             logger.info("RingCentral client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize RingCentral client: {str(e)}")
-            return 1
+        else:
+            logger.error("Failed to initialize RingCentral client")
+            return
             
-        try:
-            zoho_client = ZohoClient(dry_run=args.dry_run)
+        zoho_client = ZohoClient(dry_run=args.dry_run)
+        if zoho_client and zoho_client.access_token:
             logger.info("Zoho client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Zoho client: {str(e)}")
-            return 1
+        else:
+            logger.error("Failed to initialize Zoho client")
+            return
         
-        # Load extensions and lead owners
+        # Initialize storage
+        storage = SecureStorage()
+        
+        # Load configuration
         extensions = storage.load_extensions()
-        lead_owners = storage.load_lead_owners()
-        
         if not extensions:
-            logger.error("No extensions configured")
-            return 1
+            logger.error("No extensions configured. Please configure extensions first.")
+            return
             
+        lead_owners = storage.load_lead_owners()
         if not lead_owners:
-            logger.error("No lead owners configured")
-            return 1
+            logger.error("No lead owners configured. Please configure lead owners first.")
+            return
             
         # Create extension mapping
         extension_ids = {str(ext['id']) for ext in extensions}
         extension_names = {str(ext['id']): ext['name'] for ext in extensions}
+            
+        logger.info(f"Processing calls for {len(extensions)} extensions")
         
         # Initialize overall statistics
         overall_stats = {
@@ -1243,8 +1264,7 @@ def main():
             'api_errors': 0
         }
         
-        # Process each extension
-        logger.info(f"Processing calls for {len(extensions)} extensions")
+        # Get call logs for each extension
         all_call_logs = []
         
         for extension in extensions:
@@ -1284,20 +1304,18 @@ def main():
         logger.info(f"  New leads created: {overall_stats['new_leads'] if not args.dry_run else '0 (dry run)'}")
         logger.info(f"  Calls skipped: {overall_stats['skipped_calls']}")
         logger.info(f"  Recordings attached: {overall_stats['recordings_attached'] if not args.dry_run else '0 (dry run)'}")
-        logger.info(f"  Recording failures: {overall_stats.get('recording_failures', 0)}")
-        logger.info(f"  Duplicate processing prevented: {overall_stats.get('duplicate_prevented', 0)}")
-        logger.info(f"  API errors encountered: {overall_stats.get('api_errors', 0)}")
+        logger.info(f"  Recording failures: {overall_stats['recording_failures']}")
+        logger.info(f"  Duplicate processing prevented: {overall_stats['duplicate_prevented']}")
+        logger.info(f"  API errors encountered: {overall_stats['api_errors']}")
         
-        logger.info(f"AcceptedCalls.py - Completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        # Log completion time
+        completion_time = datetime.now()
+        logger.info(f"AcceptedCalls.py - Completed at {completion_time}")
+        
         logger.info("Processing completed successfully")
-        
         return 0
-        
     except Exception as e:
-        # Use the logger if it was created, otherwise use the default logger
-        log = logger if 'logger' in locals() else default_logger
-        log.error(f"Error in main: {str(e)}")
-        log.debug("Stack trace:", exc_info=True)
+        logging.error(f"Error in main: {str(e)}")
         return 1
 
 if __name__ == "__main__":
