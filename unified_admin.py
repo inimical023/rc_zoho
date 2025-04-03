@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import subprocess
 from tkinter import ttk, messagebox, filedialog
 import threading
+import smtplib
 
 # Try importing ttkbootstrap for modern UI styling
 try:
@@ -107,6 +108,8 @@ class SecureStorage:
         try:
             existing_creds = self.load_credentials() or {}
             existing_creds.update(credentials)
+            
+            # Store timestamp for record-keeping only (no expiration)
             existing_creds['timestamp'] = datetime.now().isoformat()
             
             json_data = json.dumps(existing_creds)
@@ -131,10 +134,8 @@ class SecureStorage:
             decrypted_data = self.cipher_suite.decrypt(encrypted_data)
             credentials = json.loads(decrypted_data.decode())
             
-            timestamp = datetime.fromisoformat(credentials['timestamp'])
-            if datetime.now() - timestamp > timedelta(hours=1):
-                logger.warning("Credentials have expired")
-                return None
+            # Timestamp is still stored but no longer used for expiration
+            # credentials will never expire
             
             return credentials
         except Exception as e:
@@ -1770,9 +1771,61 @@ class SchedulerSetupTab(ttk.Frame):
             self.day_vars[day] = var
             ttk.Checkbutton(days_frame, text=day, variable=var).grid(row=0, column=i, padx=5)
 
+        # Email notification frame
+        email_frame = ttk.LabelFrame(main_frame, text="Email Reporting", padding="15")
+        email_frame.grid(row=4, column=0, sticky="ew", pady=(0, 20))
+        email_frame.grid_columnconfigure(1, weight=1)
+        
+        # Email reporting explanation
+        email_description = ttk.Label(
+            email_frame,
+            text="When enabled, an HTML report with execution statistics and results will be automatically "
+                 "generated and emailed when the script completes. Reports include information about "
+                 "processed calls, created leads, errors, and more.",
+            wraplength=700,
+            justify="left"
+        )
+        email_description.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        
+        # Enable email reporting
+        self.email_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            email_frame,
+            text="Enable Email Reporting",
+            variable=self.email_enabled
+        ).grid(row=1, column=0, sticky="w", pady=5)
+        
+        # Email options
+        email_options_frame = ttk.Frame(email_frame)
+        email_options_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=5)
+        
+        # Custom recipients option
+        self.custom_recipients = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            email_options_frame,
+            text="Use Custom Recipients (overrides Email Settings tab)",
+            variable=self.custom_recipients
+        ).grid(row=0, column=0, sticky="w", pady=5)
+        
+        # Custom recipients entry
+        ttk.Label(email_options_frame, text="Custom Recipients:").grid(row=1, column=0, sticky="w", padx=(20, 10), pady=5)
+        self.recipients_entry = ttk.Entry(email_options_frame, width=50)
+        self.recipients_entry.grid(row=1, column=1, sticky="ew", pady=5)
+        ttk.Label(email_options_frame, text="(Comma-separated email addresses)").grid(row=1, column=2, padx=5)
+        
+        # Reminder to configure email settings
+        reminder_text = "Remember to configure your SMTP server settings in the Email Settings tab."
+        reminder_label = ttk.Label(
+            email_frame,
+            text=reminder_text,
+            font=("Helvetica", 9, "italic"),
+            foreground="#666666"
+        )
+        reminder_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
         # Output Directory Frame
         output_frame = ttk.LabelFrame(main_frame, text="Output Configuration", padding="15")
-        output_frame.grid(row=4, column=0, sticky="ew", pady=(0, 20))
+        output_frame.grid(row=5, column=0, sticky="ew", pady=(0, 20))
         output_frame.grid_columnconfigure(1, weight=1)
 
         ttk.Label(output_frame, text="Output Directory:").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=5)
@@ -1784,7 +1837,7 @@ class SchedulerSetupTab(ttk.Frame):
 
         # Button Frame with padding to ensure visibility
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=5, column=0, sticky="ew", pady=(0, 30))
+        button_frame.grid(row=6, column=0, sticky="ew", pady=(0, 30))
         button_frame.grid_columnconfigure(0, weight=1)
         
         # Generate Button - centered with increased padding
@@ -1804,6 +1857,82 @@ class SchedulerSetupTab(ttk.Frame):
                 width=20
             )
         generate_button.grid(row=0, column=0, pady=25)
+
+        # Connect events
+        self.custom_recipients.trace_add("write", self.toggle_custom_recipients)
+        self.email_enabled.trace_add("write", self.toggle_email_options)
+        
+        # Initialize states
+        self.toggle_email_options()
+
+    def toggle_email_options(self, *args):
+        """Toggle email options based on email enabled checkbox"""
+        enable = self.email_enabled.get()
+        
+        # Get all widgets in the email frame
+        email_frame = None
+        for child in self.winfo_children()[0].winfo_children():
+            if isinstance(child, ttk.LabelFrame) and child.cget("text") == "Email Reporting":
+                email_frame = child
+                break
+                
+        if not email_frame:
+            return
+            
+        # Handle widgets directly in the email frame
+        for subchild in email_frame.winfo_children():
+            # Don't disable the main checkbox
+            if isinstance(subchild, ttk.Checkbutton) and subchild.cget("text") == "Enable Email Reporting":
+                continue
+                
+            # Use try/except to safely handle state changes
+            try:
+                if enable:
+                    subchild.configure(state="normal")
+                else:
+                    subchild.configure(state="disabled")
+            except tk.TclError:
+                # Some widgets might not support state configuration
+                pass
+                
+        # Find and handle the options frame
+        options_frame = None
+        for child in email_frame.winfo_children():
+            if isinstance(child, ttk.Frame):
+                options_frame = child
+                break
+                
+        if options_frame:
+            for widget in options_frame.winfo_children():
+                try:
+                    if enable:
+                        widget.configure(state="normal")
+                    else:
+                        widget.configure(state="disabled")
+                except tk.TclError:
+                    # Some widgets might not support state configuration
+                    pass
+        
+        # If email is disabled, also disable custom recipients
+        if not enable:
+            try:
+                self.recipients_entry.configure(state="disabled")
+            except tk.TclError:
+                pass
+        else:
+            # If email is enabled, check custom recipients state
+            self.toggle_custom_recipients()
+            
+    def toggle_custom_recipients(self, *args):
+        """Toggle custom recipients entry based on checkbox state"""
+        try:
+            if self.custom_recipients.get():
+                self.recipients_entry.configure(state="normal")
+            else:
+                self.recipients_entry.configure(state="disabled")
+        except tk.TclError:
+            # Handle error
+            pass
 
     def browse_output_dir(self):
         """Open directory browser dialog"""
@@ -1837,6 +1966,13 @@ class SchedulerSetupTab(ttk.Frame):
                 messagebox.showwarning("Warning", "Please select at least one day to run the script.")
                 return
 
+            # If email is enabled, validate
+            if self.email_enabled.get() and self.custom_recipients.get():
+                recipients = self.recipients_entry.get().strip()
+                if not recipients:
+                    messagebox.showwarning("Warning", "Please enter at least one email recipient or disable custom recipients.")
+                    return
+
             # Create output directory if it doesn't exist
             output_dir = self.output_dir.get()
             os.makedirs(output_dir, exist_ok=True)
@@ -1847,6 +1983,7 @@ class SchedulerSetupTab(ttk.Frame):
                 "Accepted Calls": "accepted_calls.py"
             }
             script_name = script_map[self.script_var.get()]
+            script_type = script_name.replace('.py', '')
 
             # Generate batch file name
             batch_name = f"run_{script_name.replace('.py', '')}_{self.hour_var.get()}{self.minute_var.get()}.bat"
@@ -1879,6 +2016,30 @@ for /f "tokens=1-2 delims=: " %%a in ('time /t') do (
 :: Run the script
 "{python_exe}" "{script_name}" --hours-back {hours_back} --debug
 
+"""
+
+            # Add email reporting if enabled
+            if self.email_enabled.get():
+                batch_content += f"""
+:: Send email report
+echo Sending email report...
+"""
+                if self.custom_recipients.get():
+                    recipients_arg = f"--recipients {self.recipients_entry.get().strip()}"
+                else:
+                    recipients_arg = ""
+                
+                batch_content += f""""{python_exe}" "utils\\email_report.py" --script-type {script_type} {recipients_arg}
+if %ERRORLEVEL% NEQ 0 (
+    echo Error sending email report
+    echo Email report failed with exit code %ERRORLEVEL% >> "{output_dir}\\script_execution.log"
+) else (
+    echo Email report sent successfully
+)
+"""
+
+            # Add log entry
+            batch_content += f"""
 :: Log the execution
 echo Script executed at %date% %time% >> "{output_dir}\\script_execution.log"
 
@@ -1907,6 +2068,19 @@ The batch file has been created at:
 A log file will be created at:
 {output_dir}\\script_execution.log
 """
+
+            # Add email info to instructions if enabled
+            if self.email_enabled.get():
+                email_info = """
+Email Reporting is ENABLED:
+- A summary report will be sent after script execution
+- Make sure SMTP settings are configured in the Email Settings tab
+"""
+                if self.custom_recipients.get():
+                    email_info += f"- Custom recipients: {self.recipients_entry.get()}\n"
+                
+                scheduler_instructions += email_info
+
             # Show success message with instructions
             messagebox.showinfo(
                 "Batch File Created",
@@ -1917,6 +2091,299 @@ A log file will be created at:
         except Exception as e:
             logger.error(f"Error generating batch file: {str(e)}")
             messagebox.showerror("Error", f"Failed to generate batch file: {str(e)}")
+
+class EmailSettingsTab(ttk.Frame):
+    def __init__(self, parent, storage):
+        super().__init__(parent, padding="20")
+        self.storage = storage
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.create_widgets()
+        self.load_existing_config()
+
+    def create_widgets(self):
+        # Main container frame
+        main_frame = ttk.Frame(self)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # Add a descriptive header with details about email reporting
+        header_frame = ttk.Frame(main_frame)
+        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 20))
+        header_frame.grid_columnconfigure(0, weight=1)
+        
+        # Title
+        title_label = ttk.Label(
+            header_frame, 
+            text="Email Notification Settings", 
+            font=("Helvetica", 14, "bold")
+        )
+        title_label.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        
+        # Description text
+        description_text = (
+            "Configure email notification settings for automated reporting after script execution.\n\n"
+            "When enabled, this system will automatically create beautiful HTML reports summarizing the "
+            "results of each script run and email them to the specified recipients. Reports include "
+            "statistics on calls processed, leads created, errors encountered, and more.\n\n"
+            "Email reports are sent when scripts complete execution and provide an easy way to monitor "
+            "the integration's performance without logging into the system."
+        )
+        
+        description_label = ttk.Label(
+            header_frame, 
+            text=description_text,
+            wraplength=800,
+            justify="left"
+        )
+        description_label.grid(row=1, column=0, sticky="w", pady=(0, 10))
+        
+        # Add a visual separator
+        try:
+            if HAS_TTKBOOTSTRAP:
+                separator = ttk.Separator(header_frame, bootstyle="primary")
+            else:
+                separator = ttk.Separator(header_frame)
+            separator.grid(row=2, column=0, sticky="ew", pady=10)
+        except Exception as e:
+            # Fallback if there's an error with the separator
+            logger.warning(f"Could not create separator: {str(e)}")
+            separator = ttk.Separator(header_frame)
+            separator.grid(row=2, column=0, sticky="ew", pady=10)
+
+        # SMTP Settings Section
+        if HAS_TTKBOOTSTRAP:
+            smtp_frame = ttk.LabelFrame(main_frame, text="SMTP Server Settings", padding="20", bootstyle="primary")
+        else:
+            smtp_frame = ttk.LabelFrame(main_frame, text="SMTP Server Settings", padding="20")
+            
+        smtp_frame.grid(row=1, column=0, sticky="ew", pady=(0, 20))
+        smtp_frame.grid_columnconfigure(1, weight=1)
+
+        # SMTP fields
+        self.smtp_server = ttk.Entry(smtp_frame, width=50)
+        self.smtp_port = ttk.Entry(smtp_frame, width=10)
+        self.smtp_username = ttk.Entry(smtp_frame, width=50)
+        self.smtp_password = ttk.Entry(smtp_frame, width=50, show="*")
+        self.smtp_from = ttk.Entry(smtp_frame, width=50)
+        self.use_tls_var = tk.BooleanVar(value=True)
+        
+        fields = [
+            ("SMTP Server:", self.smtp_server),
+            ("SMTP Port:", self.smtp_port),
+            ("Username:", self.smtp_username),
+            ("Password:", self.smtp_password),
+            ("From Address:", self.smtp_from)
+        ]
+
+        for i, (label, entry) in enumerate(fields):
+            ttk.Label(smtp_frame, text=label).grid(row=i, column=0, sticky="w", padx=(0, 10), pady=7)
+            entry.grid(row=i, column=1, sticky="ew", pady=7)
+
+        # TLS checkbox
+        ttk.Checkbutton(
+            smtp_frame, 
+            text="Use TLS Encryption", 
+            variable=self.use_tls_var
+        ).grid(row=len(fields), column=0, columnspan=2, sticky="w", pady=10)
+
+        # Add help text
+        help_text = "For Gmail, use smtp.gmail.com (port 587) with TLS enabled. You may need an App Password."
+        help_label = ttk.Label(
+            smtp_frame, 
+            text=help_text, 
+            font=("Helvetica", 9, "italic"),
+            foreground="#666666"
+        )
+        help_label.grid(row=len(fields)+1, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        # Recipients Section
+        if HAS_TTKBOOTSTRAP:
+            recipients_frame = ttk.LabelFrame(main_frame, text="Email Recipients", padding="20", bootstyle="primary")
+        else:
+            recipients_frame = ttk.LabelFrame(main_frame, text="Email Recipients", padding="20")
+            
+        recipients_frame.grid(row=2, column=0, sticky="ew", pady=(0, 20))
+        recipients_frame.grid_columnconfigure(1, weight=1)
+
+        # Add header
+        recipients_header = ttk.Label(
+            recipients_frame,
+            text="Set default recipients for each script type. You can override these when scheduling tasks.",
+            wraplength=700
+        )
+        recipients_header.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 15))
+
+        ttk.Label(recipients_frame, text="Accepted Calls Recipients:").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=7)
+        self.accepted_recipients = ttk.Entry(recipients_frame, width=50)
+        self.accepted_recipients.grid(row=1, column=1, sticky="ew", pady=7)
+        ttk.Label(recipients_frame, text="(Comma-separated email addresses)").grid(row=1, column=2, padx=5)
+
+        ttk.Label(recipients_frame, text="Missed Calls Recipients:").grid(row=2, column=0, sticky="w", padx=(0, 10), pady=7)
+        self.missed_recipients = ttk.Entry(recipients_frame, width=50)
+        self.missed_recipients.grid(row=2, column=1, sticky="ew", pady=7)
+        ttk.Label(recipients_frame, text="(Comma-separated email addresses)").grid(row=2, column=2, padx=5)
+
+        # Test and Save Buttons
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.grid(row=3, column=0, sticky="ew", pady=20)
+        buttons_frame.grid_columnconfigure(0, weight=1)
+        buttons_frame.grid_columnconfigure(1, weight=1)
+        
+        if HAS_TTKBOOTSTRAP:
+            ttk.Button(
+                buttons_frame, 
+                text="Test SMTP Connection", 
+                command=self.test_smtp_connection,
+                bootstyle="info",
+                width=20
+            ).grid(row=0, column=0, padx=10, pady=10)
+            
+            ttk.Button(
+                buttons_frame, 
+                text="Save Settings", 
+                command=self.save_settings,
+                bootstyle="success",
+                width=20
+            ).grid(row=0, column=1, padx=10, pady=10)
+        else:
+            ttk.Button(
+                buttons_frame, 
+                text="Test SMTP Connection", 
+                command=self.test_smtp_connection,
+                width=20
+            ).grid(row=0, column=0, padx=10, pady=10)
+            
+            ttk.Button(
+                buttons_frame, 
+                text="Save Settings", 
+                command=self.save_settings,
+                width=20
+            ).grid(row=0, column=1, padx=10, pady=10)
+
+    def load_existing_config(self):
+        """Load existing email configuration"""
+        try:
+            config_path = os.path.join('data', 'email_config.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                
+                # Load SMTP settings
+                smtp = config.get('smtp_settings', {})
+                self.smtp_server.insert(0, smtp.get('server', ''))
+                self.smtp_port.insert(0, str(smtp.get('port', 587)))
+                self.smtp_username.insert(0, smtp.get('username', ''))
+                self.smtp_password.insert(0, smtp.get('password', ''))
+                self.smtp_from.insert(0, smtp.get('from_address', ''))
+                self.use_tls_var.set(smtp.get('use_tls', True))
+                
+                # Load recipients
+                recipients = config.get('recipients', {})
+                self.accepted_recipients.insert(0, ', '.join(recipients.get('accepted_calls', [])))
+                self.missed_recipients.insert(0, ', '.join(recipients.get('missed_calls', [])))
+        except Exception as e:
+            logger.error(f"Error loading email configuration: {str(e)}")
+            messagebox.showerror("Error", f"Failed to load email configuration: {str(e)}")
+
+    def test_smtp_connection(self):
+        """Test SMTP connection with the provided settings"""
+        # Get settings from form
+        server = self.smtp_server.get()
+        port = self.smtp_port.get()
+        username = self.smtp_username.get()
+        password = self.smtp_password.get()
+        use_tls = self.use_tls_var.get()
+        
+        if not all([server, port, username, password]):
+            messagebox.showerror("Error", "Please fill in all SMTP fields")
+            return
+            
+        try:
+            # Convert port to integer
+            port = int(port)
+            
+            # Create test message
+            logger.info(f"Testing SMTP connection to {server}:{port}")
+            smtp = smtplib.SMTP(server, port)
+            
+            # Set debug level
+            smtp.set_debuglevel(1)
+            
+            if use_tls:
+                smtp.starttls()
+                
+            # Try to login
+            smtp.login(username, password)
+            
+            # Close connection
+            smtp.quit()
+            
+            messagebox.showinfo("Success", "SMTP connection successful!")
+        except Exception as e:
+            logger.error(f"SMTP test failed: {str(e)}")
+            messagebox.showerror("Connection Failed", f"Could not connect to SMTP server: {str(e)}")
+
+    def save_settings(self):
+        """Save email settings to config file"""
+        try:
+            # Parse recipients into lists
+            accepted_list = [email.strip() for email in self.accepted_recipients.get().split(',') if email.strip()]
+            missed_list = [email.strip() for email in self.missed_recipients.get().split(',') if email.strip()]
+            
+            # Create config object
+            config = {
+                "smtp_settings": {
+                    "server": self.smtp_server.get(),
+                    "port": int(self.smtp_port.get()),
+                    "username": self.smtp_username.get(),
+                    "password": self.smtp_password.get(),
+                    "use_tls": self.use_tls_var.get(),
+                    "from_address": self.smtp_from.get()
+                },
+                "recipients": {
+                    "accepted_calls": accepted_list,
+                    "missed_calls": missed_list
+                }
+            }
+            
+            # Save to file
+            config_path = os.path.join('data', 'email_config.json')
+            with open(config_path, 'w') as f:
+                json.dump(config, f, indent=4)
+                
+            messagebox.showinfo("Success", "Email settings saved successfully!")
+        except Exception as e:
+            logger.error(f"Error saving email configuration: {str(e)}")
+            messagebox.showerror("Error", f"Failed to save email configuration: {str(e)}")
+
+def create_ttk_widget_safely(widget_type, parent, **kwargs):
+    """
+    Safely create ttk widgets that might have bootstyle parameters,
+    handling differences between ttkbootstrap and standard ttk.
+    
+    Args:
+        widget_type: The ttk widget class (e.g., ttk.Button)
+        parent: The parent widget
+        **kwargs: Widget parameters
+        
+    Returns:
+        The created widget
+    """
+    # If not using ttkbootstrap, remove bootstyle parameter
+    if not HAS_TTKBOOTSTRAP and 'bootstyle' in kwargs:
+        del kwargs['bootstyle']
+        
+    # Create the widget with the cleaned parameters
+    try:
+        widget = widget_type(parent, **kwargs)
+        return widget
+    except tk.TclError as e:
+        # If there's a Tcl error, try again with minimal parameters
+        logger.warning(f"Error creating {widget_type.__name__}: {str(e)}")
+        basic_kwargs = {k: v for k, v in kwargs.items() 
+                       if k not in ['bootstyle', 'style', 'class']}
+        return widget_type(parent, **basic_kwargs)
 
 class UnifiedAdminGUI:
     def __init__(self, root):
@@ -2000,26 +2467,33 @@ class UnifiedAdminGUI:
         self.notebook_container.grid_columnconfigure(0, weight=1)
 
         # Create notebook for tabs
-        if HAS_TTKBOOTSTRAP:
-            self.notebook = ttk.Notebook(self.notebook_container, bootstyle="default")
-        else:
+        try:
+            if HAS_TTKBOOTSTRAP:
+                self.notebook = ttk.Notebook(self.notebook_container, bootstyle="default")
+            else:
+                self.notebook = ttk.Notebook(self.notebook_container)
+            
+            self.notebook.grid(row=0, column=0, sticky="nsew")
+        except tk.TclError as e:
+            logger.warning(f"Error creating notebook with bootstyle: {str(e)}")
             self.notebook = ttk.Notebook(self.notebook_container)
-        
-        self.notebook.grid(row=0, column=0, sticky="nsew")
-
+            self.notebook.grid(row=0, column=0, sticky="nsew")
+            
         # Create tabs
         self.credentials_tab = CredentialsTab(self.notebook, self.storage)
         self.extensions_tab = ExtensionsTab(self.notebook, self.storage)
         self.lead_owners_tab = LeadOwnersTab(self.notebook, self.storage)
         self.run_script_tab = RunScriptTab(self.notebook, self.storage)
         self.scheduler_tab = SchedulerSetupTab(self.notebook, self.storage)
-
+        self.email_settings_tab = EmailSettingsTab(self.notebook, self.storage)
+        
         # Add tabs to notebook
         self.notebook.add(self.credentials_tab, text='Setup Credentials')
         self.notebook.add(self.extensions_tab, text='Manage Extensions')
         self.notebook.add(self.lead_owners_tab, text='Manage Lead Owners')
         self.notebook.add(self.run_script_tab, text='Run Script')
         self.notebook.add(self.scheduler_tab, text='Scheduler')
+        self.notebook.add(self.email_settings_tab, text='Email Settings')
         
         # Add footer frame
         self.footer_frame = ttk.Frame(self.main_frame)
@@ -2044,26 +2518,37 @@ class UnifiedAdminGUI:
         credit_label.grid(row=0, column=1, pady=5)
         
         # Open Logs button on the right
-        if HAS_TTKBOOTSTRAP:
+        try:
+            if HAS_TTKBOOTSTRAP:
+                self.logs_button = ttk.Button(
+                    self.footer_frame,
+                    text="Open Logs Directory",
+                    command=self.open_logs_directory,
+                    bootstyle="info-outline",
+                    width=20
+                )
+            else:
+                self.logs_button = ttk.Button(
+                    self.footer_frame,
+                    text="Open Logs Directory",
+                    command=self.open_logs_directory,
+                    width=20
+                )
+            self.logs_button.grid(row=0, column=2, padx=15, pady=5, sticky="e")
+        except tk.TclError as e:
+            logger.warning(f"Error creating logs button with bootstyle: {str(e)}")
             self.logs_button = ttk.Button(
                 self.footer_frame,
                 text="Open Logs Directory",
                 command=self.open_logs_directory,
-                bootstyle="info-outline",
                 width=20
             )
-        else:
-            self.logs_button = ttk.Button(
-                self.footer_frame,
-                text="Open Logs Directory",
-                command=self.open_logs_directory,
-                width=20
-            )
-        self.logs_button.grid(row=0, column=2, padx=15, pady=5, sticky="e")
+            self.logs_button.grid(row=0, column=2, padx=15, pady=5, sticky="e")
         
         # Create required directories
         Path('logs').mkdir(exist_ok=True)
         Path('data').mkdir(exist_ok=True)
+        Path('logs/reports').mkdir(exist_ok=True)
 
     def open_logs_directory(self):
         """Open the logs directory in the system file explorer"""
